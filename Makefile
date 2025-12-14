@@ -1,14 +1,14 @@
 main:
 	@echo "Running main..."
-	uv run src/agent-lab/main.py
+	uv run python -m agentlab.main
 
 api:
 	@echo "Starting FastAPI server..."
-	uv run uvicorn agent_lab.api.main:app --reload --host 0.0.0.0 --port 8000
+	uv run uvicorn agentlab.api.main:app --reload --host 0.0.0.0 --port 8000
 
 setup-db:
 	@echo "Setting up database..."
-	uv run python -m agent_lab.database.setup
+	uv run python -m agentlab.database.setup
 
 test: test-unit test-integration
 	@echo "All tests completed successfully"

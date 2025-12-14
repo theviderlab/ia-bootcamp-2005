@@ -13,7 +13,7 @@ Agent Lab is designed for learning and experimentation with:
 ## 🏗️ Architecture
 
 ```
-agent-lab/
+agentlab/
 ├── frontend/                     # Frontend application (React/Vue)
 │   ├── src/
 │   │   └── components/
@@ -22,7 +22,7 @@ agent-lab/
 │   │       └── RAGViewer.jsx     # RAG visualization
 │   └── README.md
 │
-├── src/agent-lab/                # Python backend package
+├── src/agentlab/                 # Python backend package
 │   ├── database/                 # Database layer
 │   │   ├── config.py             # MySQL connection config
 │   │   ├── models.py             # Table schemas
@@ -107,6 +107,9 @@ uv sync
 
 # Or use Make
 make install
+
+# OPCIONAL: Instalar el paquete en modo editable para importarlo sin uv run
+uv pip install -e .
 ```
 
 ### 3. Configure Environment
@@ -142,6 +145,26 @@ make setup-db
 
 ## 🎯 Usage
 
+### Important: Using uv run
+
+Con el layout `src/`, hay dos formas de ejecutar código:
+
+**Opción 1: Usando `uv run` (Recomendado)**
+```bash
+# uv run configura automáticamente el entorno
+uv run python script.py
+uv run python -m agentlab.main
+```
+
+**Opción 2: Instalar en modo editable**
+```bash
+# Instalar una vez
+uv pip install -e .
+
+# Luego ejecutar normalmente
+python script.py
+```
+
 ### Running the FastAPI Server
 
 ```bash
@@ -149,7 +172,7 @@ make setup-db
 make api
 
 # Or directly with uvicorn
-uv run uvicorn agent_lab.api.main:app --reload
+uv run uvicorn agentlab.api.main:app --reload
 ```
 
 The API will be available at:
@@ -177,7 +200,7 @@ The API will be available at:
 make main
 
 # Or directly
-uv run python -m agent_lab.main
+uv run python -m agentlab.main
 ```
 
 ### Development Commands
@@ -219,11 +242,71 @@ make test-integration
 uv run pytest -v
 
 # With coverage
-uv run pytest --cov=src/agent-lab
+uv run pytest --cov=src/agentlab
 
 # Specific test file
 uv run pytest tests/unit/test_specific.py
 ```
+
+## 🤖 LLM Integration
+
+### Using LangChainLLM
+
+The project includes a fully implemented LLM interface using LangChain for interacting with OpenAI models.
+
+**Quick Start:**
+
+```python
+from agentlab.core.llm_interface import LangChainLLM
+from agentlab.models import ChatMessage
+from datetime import datetime
+
+# Initialize LLM
+llm = LangChainLLM(model_name="gpt-3.5-turbo")
+
+# Simple text generation
+response = llm.generate(
+    prompt="Explain machine learning in one sentence",
+    temperature=0.7,
+    max_tokens=100
+)
+
+# Chat with conversation history
+messages = [
+    ChatMessage(
+        role="system",
+        content="You are a helpful assistant",
+        timestamp=datetime.now()
+    ),
+    ChatMessage(
+        role="user",
+        content="What is Python?",
+        timestamp=datetime.now()
+    ),
+]
+response = llm.chat(messages)
+```
+
+**Features:**
+- ✅ Text generation with customizable parameters
+- ✅ Chat conversations with history
+- ✅ Support for system, user, and assistant roles
+- ✅ Error handling and validation
+- ✅ Multiple model support (GPT-3.5, GPT-4)
+
+**Run the example:**
+```bash
+# Make sure OPENAI_API_KEY is set
+export OPENAI_API_KEY="your-api-key"
+
+# Run example script
+uv run python -m agentlab.examples.llm_example
+
+# Or run basic tests
+uv run python test_llm_basic.py
+```
+
+**Full documentation:** [docs/llm_interface_guide.md](docs/llm_interface_guide.md)
 
 ## 📦 Dependency Management
 
@@ -338,22 +421,22 @@ make pre-commit
 ## 📚 Learning Paths
 
 ### 1. LLM Integration with LangChain
-- Implement [llm_interface.py](src/agent-lab/core/llm_interface.py)
+- Implement [llm_interface.py](src/agentlab/core/llm_interface.py)
 - Add support for multiple providers (OpenAI, Anthropic, etc.)
 - Experiment with different prompting strategies
 
 ### 2. RAG System Development
-- Implement [rag_service.py](src/agent-lab/core/rag_service.py)
+- Implement [rag_service.py](src/agentlab/core/rag_service.py)
 - Add document embedding generation
 - Build similarity search functionality
 
 ### 3. MCP Protocol
-- Implement [mpc_client_base.py](src/agent-lab/agents/mpc_client_base.py)
-- Implement [mpc_server_base.py](src/agent-lab/agents/mpc_server_base.py)
+- Implement [mpc_client_base.py](src/agentlab/agents/mpc_client_base.py)
+- Implement [mpc_server_base.py](src/agentlab/agents/mpc_server_base.py)
 - Follow Anthropic's MCP specification
 
 ### 4. API Development
-- Complete FastAPI routes in [chat_routes.py](src/agent-lab/api/routes/chat_routes.py)
+- Complete FastAPI routes in [chat_routes.py](src/agentlab/api/routes/chat_routes.py)
 - Add authentication and rate limiting
 - Build comprehensive test suite
 
@@ -366,31 +449,31 @@ make pre-commit
 
 ### Core Modules
 
-**[models.py](src/agent-lab/models.py)**: Protocol definitions and data models
+**[models.py](src/agentlab/models.py)**: Protocol definitions and data models
 - `LLMInterface`: Abstract interface for LLM implementations
 - `RAGService`: Protocol for RAG operations
 - `MPCClient/MPCServer`: MCP protocol interfaces
 - Data models: `ChatMessage`, `RAGResult`, `MPCInstanceInfo`
 
-**[database/](src/agent-lab/database/)**: Database layer
-- [config.py](src/agent-lab/database/config.py): MySQL connection configuration
-- [models.py](src/agent-lab/database/models.py): Table schemas and SQL definitions
-- [crud.py](src/agent-lab/database/crud.py): CRUD operations
+**[database/](src/agentlab/database/)**: Database layer
+- [config.py](src/agentlab/database/config.py): MySQL connection configuration
+- [models.py](src/agentlab/database/models.py): Table schemas and SQL definitions
+- [crud.py](src/agentlab/database/crud.py): CRUD operations
 
-**[core/](src/agent-lab/core/)**: Business logic
-- [rag_service.py](src/agent-lab/core/rag_service.py): RAG implementation
-- [mpc_manager.py](src/agent-lab/core/mpc_manager.py): MPC instance manager
-- [llm_interface.py](src/agent-lab/core/llm_interface.py): LangChain LLM wrapper
+**[core/](src/agentlab/core/)**: Business logic
+- [rag_service.py](src/agentlab/core/rag_service.py): RAG implementation
+- [mpc_manager.py](src/agentlab/core/mpc_manager.py): MPC instance manager
+- [llm_interface.py](src/agentlab/core/llm_interface.py): LangChain LLM wrapper
 
-**[agents/](src/agent-lab/agents/)**: Low-level implementations
-- [rag_processor.py](src/agent-lab/agents/rag_processor.py): Embedding generation, chunking
-- [mpc_client_base.py](src/agent-lab/agents/mpc_client_base.py): MPC client base class
-- [mpc_server_base.py](src/agent-lab/agents/mpc_server_base.py): MPC server base class
+**[agents/](src/agentlab/agents/)**: Low-level implementations
+- [rag_processor.py](src/agentlab/agents/rag_processor.py): Embedding generation, chunking
+- [mpc_client_base.py](src/agentlab/agents/mpc_client_base.py): MPC client base class
+- [mpc_server_base.py](src/agentlab/agents/mpc_server_base.py): MPC server base class
 
-**[api/](src/agent-lab/api/)**: FastAPI application
-- [main.py](src/agent-lab/api/main.py): FastAPI app entry point
-- [routes/chat_routes.py](src/agent-lab/api/routes/chat_routes.py): Chat & RAG endpoints
-- [routes/mpc_routes.py](src/agent-lab/api/routes/mpc_routes.py): MPC management endpoints
+**[api/](src/agentlab/api/)**: FastAPI application
+- [main.py](src/agentlab/api/main.py): FastAPI app entry point
+- [routes/chat_routes.py](src/agentlab/api/routes/chat_routes.py): Chat & RAG endpoints
+- [routes/mpc_routes.py](src/agentlab/api/routes/mpc_routes.py): MPC management endpoints
 
 ## 🚧 Development Status
 
@@ -450,7 +533,7 @@ cat .env | grep DB_
 uv sync
 
 # Verify package is installed
-uv pip list | grep agent-lab
+uv pip list | grep agentlab
 ```
 
 ### Port Already in Use
@@ -459,7 +542,7 @@ uv pip list | grep agent-lab
 API_PORT=8001
 
 # Or specify when running
-uv run uvicorn agent_lab.api.main:app --port 8001
+uv run uvicorn agentlab.api.main:app --port 8001
 ```
 
 ## 👥 Authors

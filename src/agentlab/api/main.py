@@ -6,6 +6,10 @@ Initializes the FastAPI app and mounts all routers.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+# Cargar variables de entorno ANTES de importar otros módulos
+load_dotenv()
 
 app = FastAPI(
     title="Agent Lab API",
@@ -30,8 +34,9 @@ def root():
         "message": "Agent Lab API",
         "version": "0.1.0",
         "endpoints": {
-            "chat": "/api/chat",
-            "mpc": "/api/mpc",
+            "generate": "/llm/generate",
+            "chat": "/llm/chat",
+            "health": "/health",
             "docs": "/docs",
         },
     }
@@ -43,7 +48,7 @@ def health_check():
     return {"status": "healthy"}
 
 
-# Routers will be mounted here
-# from agent_lab.api.routes import chat_routes, mpc_routes
-# app.include_router(chat_routes.router, prefix="/api/chat", tags=["chat"])
-# app.include_router(mpc_routes.router, prefix="/api/mpc", tags=["mpc"])
+# Mount routers
+from agentlab.api.routes import chat_routes
+
+app.include_router(chat_routes.router, prefix="/llm", tags=["llm"])
