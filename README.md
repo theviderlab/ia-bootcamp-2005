@@ -1,99 +1,228 @@
-# Python Template
+# Agent Lab
 
-A modern Python project template using [uv](https://docs.astral.sh/uv/) for fast dependency management, pytest for testing, and Ruff for code quality. It includes a `AGENTS.md` file with AI Agent coding assistant guidelines to develop quality code.
+A modern Python learning platform for experimenting with **Large Language Models (LLMs)**, **Model Context Protocol (MCP)** servers/clients, and **Retrieval Augmented Generation (RAG)** systems. Built with [uv](https://docs.astral.sh/uv/) for fast dependency management, FastAPI for the backend, and LangChain for LLM integration.
+
+## 🎯 Purpose
+
+Agent Lab is designed for learning and experimentation with:
+- **LLM Integration**: Using LangChain to interact with OpenAI, Anthropic, and other providers
+- **MCP Protocol**: Implementing Anthropic's Model Context Protocol for server/client communication
+- **RAG Systems**: Building Retrieval Augmented Generation with vector embeddings and MySQL
+- **API Development**: Creating production-ready FastAPI applications
+
+## 🏗️ Architecture
+
+```
+agent-lab/
+├── frontend/                     # Frontend application (React/Vue)
+│   ├── src/
+│   │   └── components/
+│   │       ├── Chat.jsx          # Chat interface
+│   │       ├── MPCManager.jsx    # MPC instance management
+│   │       └── RAGViewer.jsx     # RAG visualization
+│   └── README.md
+│
+├── src/agent-lab/                # Python backend package
+│   ├── database/                 # Database layer
+│   │   ├── config.py             # MySQL connection config
+│   │   ├── models.py             # Table schemas
+│   │   └── crud.py               # CRUD operations
+│   │
+│   ├── core/                     # Core business logic
+│   │   ├── rag_service.py        # RAG implementation
+│   │   ├── mpc_manager.py        # MPC instance manager
+│   │   └── llm_interface.py      # LangChain LLM wrapper
+│   │
+│   ├── agents/                   # Low-level implementations
+│   │   ├── rag_processor.py      # Embedding & retrieval
+│   │   ├── mpc_client_base.py    # MPC client base class
+│   │   └── mpc_server_base.py    # MPC server base class
+│   │
+│   ├── api/                      # FastAPI application
+│   │   ├── main.py               # FastAPI app entry point
+│   │   └── routes/
+│   │       ├── chat_routes.py    # Chat & RAG endpoints
+│   │       └── mpc_routes.py     # MPC management endpoints
+│   │
+│   ├── models.py                 # Data models & Protocols
+│   └── main.py                   # CLI entry point
+│
+├── data/                         # Static data & configurations
+│   ├── initial_knowledge/        # RAG knowledge base documents
+│   ├── examples/                 # Example queries
+│   └── configs/                  # Config files
+│
+├── tests/
+│   ├── unit/                     # Unit tests with mocks
+│   └── integration/              # Integration tests
+│
+├── pyproject.toml                # Dependencies & configuration
+├── Makefile                      # Development automation
+├── AGENTS.md                     # AI coding assistant guidelines
+└── README.md                     # This file
+```
 
 ## 🚀 Features
 
-- **Fast Package Management**: Uses `uv` for lightning-fast dependency resolution and installation
-- **Modern Python**: Python 3.12+ with type hints support
-- **Testing Ready**: Pre-configured pytest with unit and integration test structure
+- **Fast Package Management**: Uses `uv` for lightning-fast dependency resolution
+- **Modern Python**: Python 3.12+ with type hints and Protocols
+- **FastAPI Backend**: Production-ready REST API with automatic documentation
+- **LangChain Integration**: Unified interface for multiple LLM providers
+- **MCP Support**: Anthropic's Model Context Protocol implementation
+- **RAG System**: Vector embeddings with MySQL storage
+- **Testing Ready**: Pre-configured pytest with unit and integration tests
 - **Code Quality**: Ruff for formatting and linting
-- **Type Checking**: Optional basedpyright configuration
-- **Development Automation**: Makefile with common development tasks
+- **SOLID Principles**: Clean architecture with dependency injection
 
 ## 📋 Requirements
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
+- MySQL 8.0+ (for database)
+- Node.js 18+ (for frontend, optional)
 
 ## 🛠️ Installation
 
-### Install uv (if not already installed)
+### 1. Install uv (if not already installed)
 
+**Windows:**
+```bash
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**Linux/macOS:**
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Clone and Setup
+### 2. Clone and Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/alexfdez1010/python-template
-cd python-template
+git clone https://github.com/theviderlab/ia-bootcamp-2005
+cd ia-bootcamp-2005
 
 # Sync dependencies (creates .venv and installs packages)
 uv sync
+
+# Or use Make
+make install
+```
+
+### 3. Configure Environment
+
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit .env and add your credentials
+# - Database configuration (MySQL)
+# - OpenAI API key
+# - Anthropic API key (optional)
+```
+
+Required environment variables:
+```bash
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_NAME=agent_lab
+
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 4. Setup Database
+
+```bash
+# Initialize MySQL database and tables
+make setup-db
 ```
 
 ## 🎯 Usage
 
-### Running the Application
+### Running the FastAPI Server
 
 ```bash
-# Using Makefile
+# Start the API server (with auto-reload)
+make api
+
+# Or directly with uvicorn
+uv run uvicorn agent_lab.api.main:app --reload
+```
+
+The API will be available at:
+- **API**: http://localhost:8000
+- **Interactive Docs**: http://localhost:8000/docs
+- **Alternative Docs**: http://localhost:8000/redoc
+
+### API Endpoints
+
+**Chat & RAG:**
+- `POST /api/chat/message` - Send a chat message
+- `POST /api/chat/rag/query` - Query the RAG system
+- `POST /api/chat/rag/documents` - Add documents to knowledge base
+
+**MCP Management:**
+- `POST /api/mpc/instances` - Create MPC server instance
+- `GET /api/mpc/instances` - List all instances
+- `GET /api/mpc/instances/{id}` - Get instance status
+- `DELETE /api/mpc/instances/{id}` - Stop instance
+
+### Running the CLI
+
+```bash
+# Run the main CLI application
 make main
 
-# Or directly with uv
-uv run src/python-template/main.py
-
-# Or with Python module syntax
-uv run python -m python-template.main
+# Or directly
+uv run python -m agent_lab.main
 ```
 
 ### Development Commands
 
-The project includes a `Makefile` with convenient shortcuts:
-
 ```bash
-make main              # Run the main application
-make test              # Run all tests (unit + integration)
+make help              # Show all available commands
+make install           # Install/sync dependencies
+make api               # Start FastAPI server
+make setup-db          # Initialize database
+make test              # Run all tests
 make test-unit         # Run unit tests only
 make test-integration  # Run integration tests only
 make format            # Format code with Ruff
 make lint              # Lint code with Ruff
-make pre-commit        # Run pre-commit checks (unit tests + format + lint)
+make pre-commit        # Run pre-commit checks
+make clean             # Clean cache files
 ```
 
 ## 🧪 Testing
 
-The project uses pytest with a clear separation between unit and integration tests:
+The project uses pytest with separation between unit and integration tests:
 
-- **Unit Tests** (`tests/unit/`): Fast, isolated tests using mocks
-- **Integration Tests** (`tests/integration/`): Tests with real APIs/services
+- **Unit Tests** ([tests/unit/](tests/unit/)): Fast, isolated tests using mocks
+- **Integration Tests** ([tests/integration/](tests/integration/)): Tests with real APIs/services
 
 ### Running Tests
 
 ```bash
 # All tests
 make test
-# or
-uv run pytest
 
 # Unit tests only
 make test-unit
-# or
-uv run pytest tests/unit
 
-# Integration tests only
+# Integration tests only  
 make test-integration
-# or
-uv run pytest tests/integration
 
 # With verbose output
 uv run pytest -v
 
 # With coverage
-uv run pytest --cov=src/python-template
+uv run pytest --cov=src/agent-lab
+
+# Specific test file
+uv run pytest tests/unit/test_specific.py
 ```
 
 ## 📦 Dependency Management
@@ -107,18 +236,16 @@ uv add <package-name>
 # Add development dependency
 uv add --dev <package-name>
 
-# Example: Add requests library
-uv add requests
-
-# Example: Add pytest plugin
-uv add --dev pytest-cov
+# Examples:
+uv add langchain-anthropic     # Add Anthropic support
+uv add --dev pytest-asyncio    # Add async test support
 ```
 
 ### Updating Dependencies
 
 ```bash
-# Update a specific package
-uv lock --upgrade-package <package-name>
+# Update specific package
+uv lock --upgrade-package langchain
 
 # Update all packages
 uv lock --upgrade
@@ -135,13 +262,22 @@ uv remove <package-name>
 
 ## 🎨 Code Quality
 
+### Project Guidelines
+
+This project follows **SOLID principles** and enforces:
+- **150-line maximum** per file (refactor if exceeded)
+- **Protocol-based interfaces** for dependency injection
+- **Type hints** for all function signatures
+- **Docstrings** for all public APIs (Google style)
+- **Composition over inheritance**
+
+See [AGENTS.md](AGENTS.md) for complete coding guidelines.
+
 ### Formatting
 
 ```bash
 # Auto-format all code
 make format
-# or
-uv run ruff format
 
 # Check formatting without changes
 uv run ruff format --check
@@ -152,90 +288,193 @@ uv run ruff format --check
 ```bash
 # Run linter
 make lint
-# or
-uv run ruff check
 
-# Auto-fix issues where possible
+# Auto-fix issues
 uv run ruff check --fix
 ```
 
 ### Pre-commit Checks
 
-Before committing code, run:
-
 ```bash
+# Run before committing (unit tests + format + lint)
 make pre-commit
 ```
 
-This runs unit tests, formatting, and linting to ensure code quality.
+## 🗄️ Database Schema
 
-## 📁 Project Structure
+### Tables
 
-```
-.
-├── src/
-│   └── python-template/          # Main package source code
-│       ├── __init__.py
-│       └── main.py               # CLI entry point
-├── tests/
-│   ├── unit/                     # Unit tests with mocks
-│   └── integration/              # Integration tests (real APIs/services)
-├── .python-version               # Python version (3.12)
-├── pyproject.toml                # Project metadata & dependencies
-├── uv.lock                       # Locked dependencies (DO NOT edit manually)
-├── Makefile                      # Development task automation
-├── .gitignore                    # Git ignore patterns
-├── AGENTS.md                     # AI coding assistant guidelines
-└── README.md                     # This file
+**knowledge_base**: Stores documents and embeddings for RAG
+```sql
+- id: INT (primary key)
+- doc_id: VARCHAR(255) (unique)
+- content: TEXT
+- embedding: JSON
+- metadata: JSON
+- created_at: TIMESTAMP
 ```
 
-## 🔧 Configuration
+**chat_history**: Stores conversation history
+```sql
+- id: INT (primary key)
+- session_id: VARCHAR(255)
+- role: ENUM('user', 'assistant', 'system')
+- content: TEXT
+- metadata: JSON
+- created_at: TIMESTAMP
+```
 
-### pyproject.toml
+**mpc_instances**: Tracks MPC server instances
+```sql
+- id: INT (primary key)
+- instance_id: VARCHAR(255) (unique)
+- status: ENUM('running', 'stopped', 'error')
+- host: VARCHAR(255)
+- port: INT
+- metadata: JSON
+- created_at: TIMESTAMP
+```
 
-The `pyproject.toml` file contains:
-- Project metadata (name, version, description)
-- Python version requirement (>=3.12)
-- Dependencies list
-- Build system configuration (Hatchling)
-- Tool configurations (pytest, basedpyright)
+## 📚 Learning Paths
 
-### Environment Variables
+### 1. LLM Integration with LangChain
+- Implement [llm_interface.py](src/agent-lab/core/llm_interface.py)
+- Add support for multiple providers (OpenAI, Anthropic, etc.)
+- Experiment with different prompting strategies
 
-For sensitive configuration, create a `.env` file (already in `.gitignore`):
+### 2. RAG System Development
+- Implement [rag_service.py](src/agent-lab/core/rag_service.py)
+- Add document embedding generation
+- Build similarity search functionality
 
+### 3. MCP Protocol
+- Implement [mpc_client_base.py](src/agent-lab/agents/mpc_client_base.py)
+- Implement [mpc_server_base.py](src/agent-lab/agents/mpc_server_base.py)
+- Follow Anthropic's MCP specification
+
+### 4. API Development
+- Complete FastAPI routes in [chat_routes.py](src/agent-lab/api/routes/chat_routes.py)
+- Add authentication and rate limiting
+- Build comprehensive test suite
+
+### 5. Frontend Integration
+- Choose React or Vue.js
+- Implement chat interface
+- Build MPC instance manager UI
+
+## � Project Structure Details
+
+### Core Modules
+
+**[models.py](src/agent-lab/models.py)**: Protocol definitions and data models
+- `LLMInterface`: Abstract interface for LLM implementations
+- `RAGService`: Protocol for RAG operations
+- `MPCClient/MPCServer`: MCP protocol interfaces
+- Data models: `ChatMessage`, `RAGResult`, `MPCInstanceInfo`
+
+**[database/](src/agent-lab/database/)**: Database layer
+- [config.py](src/agent-lab/database/config.py): MySQL connection configuration
+- [models.py](src/agent-lab/database/models.py): Table schemas and SQL definitions
+- [crud.py](src/agent-lab/database/crud.py): CRUD operations
+
+**[core/](src/agent-lab/core/)**: Business logic
+- [rag_service.py](src/agent-lab/core/rag_service.py): RAG implementation
+- [mpc_manager.py](src/agent-lab/core/mpc_manager.py): MPC instance manager
+- [llm_interface.py](src/agent-lab/core/llm_interface.py): LangChain LLM wrapper
+
+**[agents/](src/agent-lab/agents/)**: Low-level implementations
+- [rag_processor.py](src/agent-lab/agents/rag_processor.py): Embedding generation, chunking
+- [mpc_client_base.py](src/agent-lab/agents/mpc_client_base.py): MPC client base class
+- [mpc_server_base.py](src/agent-lab/agents/mpc_server_base.py): MPC server base class
+
+**[api/](src/agent-lab/api/)**: FastAPI application
+- [main.py](src/agent-lab/api/main.py): FastAPI app entry point
+- [routes/chat_routes.py](src/agent-lab/api/routes/chat_routes.py): Chat & RAG endpoints
+- [routes/mpc_routes.py](src/agent-lab/api/routes/mpc_routes.py): MPC management endpoints
+
+## 🚧 Development Status
+
+### ✅ Completed
+- Project structure and organization
+- Protocol definitions and interfaces
+- Database schema design
+- FastAPI skeleton with routes
+- Development tooling (Makefile, testing setup)
+
+### 🔨 To Be Implemented
+- LangChain LLM integration
+- RAG service with embeddings
+- MCP client/server implementations
+- Database CRUD operations
+- Frontend application
+- Docker composition
+
+## 🤝 Contributing
+
+This is a learning project. To contribute:
+
+1. Follow the coding guidelines in [AGENTS.md](AGENTS.md)
+2. Maintain **150-line limit** per file
+3. Use **Protocol-based interfaces** for new features
+4. Add **unit tests** for all new code
+5. Run `make pre-commit` before committing
+6. Add **docstrings** with Args, Returns, and Raises sections
+
+## 📖 Resources
+
+### Documentation
+- [LangChain Documentation](https://python.langchain.com/)
+- [Anthropic MCP Specification](https://modelcontextprotocol.io/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [uv Documentation](https://docs.astral.sh/uv/)
+
+### Learning Materials
+- [AGENTS.md](AGENTS.md) - Comprehensive coding guidelines
+- [Frontend README](frontend/README.md) - Frontend structure
+- [Data README](data/README.md) - Data directory usage
+
+## 🐛 Troubleshooting
+
+### Database Connection Issues
 ```bash
-# .env
-API_KEY=your-secret-key
-DATABASE_URL=postgresql://localhost/db
+# Check MySQL is running
+mysql -u root -p
+
+# Verify credentials in .env
+cat .env | grep DB_
 ```
 
-Load with `python-dotenv` (already included):
+### Import Errors
+```bash
+# Ensure dependencies are synced
+uv sync
 
-```python
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-api_key = os.getenv("API_KEY")
+# Verify package is installed
+uv pip list | grep agent-lab
 ```
 
-## 🚀 Development Workflow
+### Port Already in Use
+```bash
+# Change API port in .env
+API_PORT=8001
 
-1. **Make changes** to code in `src/python-template/`
-2. **Write tests** in `tests/unit/` or `tests/integration/`
-3. **Run tests**: `make test`
-4. **Format code**: `make format`
-5. **Lint code**: `make lint`
-6. **Run pre-commit checks**: `make pre-commit`
-7. **Commit** your changes
+# Or specify when running
+uv run uvicorn agent_lab.api.main:app --port 8001
+```
 
 ## 👥 Authors
 
-Alejandro Fernández Camello & Claude Sonnet 4.5
+- Built for IA Bootcamp 2025
+- Based on Python template by Alejandro Fernández Camello
+
+## 📝 License
+
+This project is for educational purposes.
 
 ## 🙏 Acknowledgments
 
-- Built with [uv](https://docs.astral.sh/uv/) for fast Python package management
-- Code quality powered by [Ruff](https://github.com/astral-sh/ruff)
-- Testing with [pytest](https://pytest.org/)
+- [uv](https://docs.astral.sh/uv/) - Fast Python package management
+- [LangChain](https://python.langchain.com/) - LLM framework
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
+- [Ruff](https://github.com/astral-sh/ruff) - Python linter and formatter
+- [Anthropic](https://www.anthropic.com/) - MCP specification

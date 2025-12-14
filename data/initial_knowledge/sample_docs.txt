@@ -1,0 +1,28 @@
+Agent Lab - Learning Platform Documentation
+
+This is a sample document for the RAG knowledge base.
+
+What is Agent Lab?
+Agent Lab is a learning platform designed for experimenting with Large Language Models (LLMs),
+Model Context Protocol (MCP) servers and clients, and Retrieval Augmented Generation (RAG) systems.
+
+Key Features:
+1. LLM Integration via LangChain
+2. MCP Server/Client Management
+3. RAG System with Vector Embeddings
+4. FastAPI Backend
+5. Interactive Frontend
+
+Architecture:
+- Backend: Python with FastAPI
+- Database: MySQL for persistence
+- Frontend: React/Vue (to be implemented)
+- LLM Framework: LangChain
+- MCP: Anthropic's Model Context Protocol
+
+Use Cases:
+- Learn about prompt engineering
+- Experiment with different LLM models
+- Build RAG applications
+- Understand MPC protocol
+- Test chat interfaces

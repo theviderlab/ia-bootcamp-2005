@@ -1,12 +1,19 @@
 [project]
-name = "python-template"
+name = "agent-lab"
 version = "0.1.0"
-description = "Add your description here"
+description = "Learning platform for LLMs, MCP, and RAG systems"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pytest>=8.4.2",
+    "fastapi>=0.115.6",
+    "uvicorn[standard]>=0.34.0",
+    "langchain>=0.3.13",
+    "langchain-community>=0.3.13",
+    "langchain-openai>=0.2.14",
+    "mysql-connector-python>=9.1.0",
+    "pydantic>=2.10.5",
     "python-dotenv>=1.1.1",
+    "pytest>=8.4.2",
 ]
 
 [build-system]
@@ -14,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/python-template"]
+packages = ["src/agent-lab"]
 
 [tool.basedpyright]
 exclude = [
