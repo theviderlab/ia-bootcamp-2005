@@ -55,10 +55,25 @@ CREATE TABLE IF NOT EXISTS mpc_instances (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
+CREATE_SESSION_CONFIGS_TABLE = """
+CREATE TABLE IF NOT EXISTS session_configs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id VARCHAR(255) UNIQUE NOT NULL,
+    memory_config JSON NOT NULL,
+    rag_config JSON NOT NULL,
+    metadata JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_session_id (session_id),
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+"""
+
 ALL_TABLES = [
     CREATE_KNOWLEDGE_BASE_TABLE,
     CREATE_CHAT_HISTORY_TABLE,
     CREATE_MPC_INSTANCES_TABLE,
+    CREATE_SESSION_CONFIGS_TABLE,
 ]
 
 
@@ -96,6 +111,19 @@ class MPCInstanceRow:
     status: str
     host: str
     port: int
+    metadata: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class SessionConfigRow:
+    """Represents a row in the session_configs table."""
+
+    id: int
+    session_id: str
+    memory_config: dict
+    rag_config: dict
     metadata: dict | None
     created_at: datetime
     updated_at: datetime

@@ -34,10 +34,38 @@ def root():
         "message": "Agent Lab API",
         "version": "0.1.0",
         "endpoints": {
-            "generate": "/llm/generate",
-            "chat": "/llm/chat",
             "health": "/health",
             "docs": "/docs",
+            "llm": {
+                "generate": "/llm/generate",
+                "chat": "/llm/chat",
+            },
+            "rag": {
+                "query": "/llm/rag/query",
+                "add_documents": "/llm/rag/documents",
+                "add_directory": "/llm/rag/directory",
+            },
+            "memory": {
+                "context": "/llm/memory/context",
+                "history": "/llm/memory/history",
+                "stats": "/llm/memory/stats",
+                "search": "/llm/memory/search",
+                "clear": "/llm/memory/session/{session_id}",
+            },
+            "config": {
+                "status": "/config/status",
+                "get_session": "/config/session/{session_id}",
+                "update_session": "/config/session",
+                "delete_session": "/config/session/{session_id}",
+                "update_memory": "/config/memory",
+                "update_rag": "/config/rag",
+            },
+            "mpc": {
+                "create_instance": "/mpc/instances",
+                "delete_instance": "/mpc/instances/{instance_id}",
+                "get_instance": "/mpc/instances/{instance_id}",
+                "list_instances": "/mpc/instances",
+            },
         },
     }
 
@@ -49,6 +77,8 @@ def health_check():
 
 
 # Mount routers
-from agentlab.api.routes import chat_routes
+from agentlab.api.routes import chat_routes, config_routes, mpc_routes
 
 app.include_router(chat_routes.router, prefix="/llm", tags=["llm"])
+app.include_router(config_routes.router, prefix="/config", tags=["config"])
+app.include_router(mpc_routes.router, prefix="/mpc", tags=["mpc"])

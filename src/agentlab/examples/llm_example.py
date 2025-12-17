@@ -17,7 +17,7 @@ def example_generate():
     """Example: Simple text generation."""
     print("\n=== Example 1: Text Generation ===")
     
-    # Initialize LLM (API key from environment)
+    # Initialize LLM with default parameters (API key from environment)
     llm = LangChainLLM(model_name="gpt-3.5-turbo")
     
     # Generate text
@@ -32,8 +32,12 @@ def example_chat():
     """Example: Chat conversation."""
     print("\n=== Example 2: Chat Conversation ===")
     
-    # Initialize LLM
-    llm = LangChainLLM(model_name="gpt-3.5-turbo")
+    # Initialize LLM with custom default parameters
+    llm = LangChainLLM(
+        model_name="gpt-3.5-turbo",
+        temperature=0.7,
+        max_tokens=500
+    )
     
     # Create conversation history
     messages = [
@@ -59,7 +63,7 @@ def example_chat():
         ),
     ]
     
-    # Generate response
+    # Generate response (uses instance defaults: temperature=0.7, max_tokens=500)
     response = llm.chat(messages)
     
     print("Conversation:")
@@ -72,15 +76,52 @@ def example_custom_parameters():
     """Example: Using custom parameters."""
     print("\n=== Example 3: Custom Parameters ===")
     
-    # Initialize with custom model
-    llm = LangChainLLM(model_name="gpt-4")
+    # Initialize with custom model and instance defaults
+    llm = LangChainLLM(
+        model_name="gpt-4",
+        temperature=0.5,
+        max_tokens=200
+    )
     
     # Generate with low temperature for more deterministic output
     prompt = "List three programming languages."
     response = llm.generate(prompt, temperature=0.2, max_tokens=50)
     
     print(f"Prompt: {prompt}")
-    print(f"Response: {response}")
+    print(f"Response (deterministic with temp=0.2): {response}")
+
+
+def example_chat_with_parameters():
+    """Example: Chat with override parameters."""
+    print("\n=== Example 4: Chat with Custom Parameters ===")
+    
+    # Initialize with default parameters
+    llm = LangChainLLM(
+        model_name="gpt-3.5-turbo",
+        temperature=0.7,
+        max_tokens=1000
+    )
+    
+    # Create conversation
+    messages = [
+        ChatMessage(
+            role="system",
+            content="You are a concise technical assistant.",
+            timestamp=datetime.now(),
+        ),
+        ChatMessage(
+            role="user",
+            content="Explain the SOLID principles.",
+            timestamp=datetime.now(),
+        ),
+    ]
+    
+    # Generate response with overridden parameters for concise output
+    response = llm.chat(messages, temperature=0.5, max_tokens=300)
+    
+    print("System: You are a concise technical assistant.")
+    print("User: Explain the SOLID principles.")
+    print(f"Assistant (with temp=0.5, max_tokens=300): {response}")
 
 
 def main():
@@ -96,6 +137,7 @@ def main():
         example_generate()
         example_chat()
         example_custom_parameters()
+        example_chat_with_parameters()
         
         print("\n✅ All examples completed successfully!")
     

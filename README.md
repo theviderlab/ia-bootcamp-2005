@@ -8,6 +8,7 @@ Agent Lab is designed for learning and experimentation with:
 - **LLM Integration**: Using LangChain to interact with OpenAI, Anthropic, and other providers
 - **MCP Protocol**: Implementing Anthropic's Model Context Protocol for server/client communication
 - **RAG Systems**: Building Retrieval Augmented Generation with vector embeddings and MySQL
+- **Memory Systems**: Multi-level conversation memory (short-term, semantic, episodic, profile, procedural)
 - **API Development**: Creating production-ready FastAPI applications
 
 ## 🏗️ Architecture
@@ -31,12 +32,14 @@ agentlab/
 │   ├── core/                     # Core business logic
 │   │   ├── rag_service.py        # RAG implementation
 │   │   ├── mpc_manager.py        # MPC instance manager
-│   │   └── llm_interface.py      # LangChain LLM wrapper
+│   │   ├── llm_interface.py      # LangChain LLM wrapper
+│   │   └── memory_service.py     # Memory management (NEW)
 │   │
 │   ├── agents/                   # Low-level implementations
 │   │   ├── rag_processor.py      # Embedding & retrieval
 │   │   ├── mpc_client_base.py    # MPC client base class
-│   │   └── mpc_server_base.py    # MPC server base class
+│   │   ├── mpc_server_base.py    # MPC server base class
+│   │   └── memory_processor.py   # Long-term memory (NEW)
 │   │
 │   ├── api/                      # FastAPI application
 │   │   ├── main.py               # FastAPI app entry point
@@ -69,7 +72,8 @@ agentlab/
 - **FastAPI Backend**: Production-ready REST API with automatic documentation
 - **LangChain Integration**: Unified interface for multiple LLM providers
 - **MCP Support**: Anthropic's Model Context Protocol implementation
-- **RAG System**: Vector embeddings with MySQL storage
+- **RAG System**: Vector embeddings with Pinecone storage
+- **Memory System**: Multi-level conversation memory (short-term, semantic, episodic, profile, procedural)
 - **Testing Ready**: Pre-configured pytest with unit and integration tests
 - **Code Quality**: Ruff for formatting and linting
 - **SOLID Principles**: Clean architecture with dependency injection
@@ -126,14 +130,22 @@ cp .env.example .env
 
 Required environment variables:
 ```bash
+# Database
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
 DB_NAME=agent_lab
 
+# LLM APIs
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Pinecone (for RAG)
+PINECONE_API_KEY=pcsk_...
+PINECONE_INDEX_NAME=agent-lab-index
+PINECONE_CLOUD=aws
+PINECONE_REGION=us-east-1
 ```
 
 ### 4. Setup Database
@@ -182,10 +194,14 @@ The API will be available at:
 
 ### API Endpoints
 
-**Chat & RAG:**
-- `POST /api/chat/message` - Send a chat message
-- `POST /api/chat/rag/query` - Query the RAG system
-- `POST /api/chat/rag/documents` - Add documents to knowledge base
+**Chat & LLM:**
+- `POST /llm/generate` - Generate text from prompt
+- `POST /llm/chat` - Chat with conversation history
+
+**RAG (Retrieval Augmented Generation):**
+- `POST /llm/rag/query` - Query knowledge base with RAG
+- `POST /llm/rag/documents` - Add documents to knowledge base
+- `POST /llm/rag/directory` - Add directory of documents
 
 **MCP Management:**
 - `POST /api/mpc/instances` - Create MPC server instance
@@ -307,6 +323,155 @@ uv run python test_llm_basic.py
 ```
 
 **Full documentation:** [docs/llm_interface_guide.md](docs/llm_interface_guide.md)
+
+## 🔍 RAG System
+
+### Using RAGServiceImpl
+
+The project includes a **fully implemented RAG (Retrieval Augmented Generation)** system using Pinecone vector database and LangChain.
+
+**Quick Start:**
+
+```python
+from agentlab.core.llm_interface import LangChainLLM
+from agentlab.core.rag_service import RAGServiceImpl
+
+# Initialize RAG service
+llm = LangChainLLM()
+rag_service = RAGServiceImpl(llm=llm)
+
+# Add documents to knowledge base
+rag_service.add_documents_from_directory(
+    directory="data/initial_knowledge",
+    namespace="my-project"
+)
+
+# Query the knowledge base
+result = rag_service.query(
+    query="What is Agent Lab?",
+    top_k=5,
+    namespace="my-project"
+)
+
+print(f"Answer: {result.response}")
+print(f"Sources: {len(result.sources)}")
+```
+
+**Features:**
+- ✅ Pinecone vector database integration
+- ✅ Automatic document chunking with metadata
+- ✅ Multi-tenant support via namespaces
+- ✅ Extensible document loaders (txt, md, log)
+- ✅ Stable document IDs for upsert behavior
+- ✅ Source attribution and citation
+- ✅ REST API endpoints
+
+**Quick Test:**
+```bash
+# Make sure environment is configured
+# OPENAI_API_KEY, PINECONE_API_KEY, etc.
+
+# Start API server
+make api
+
+# Add sample documents
+curl -X POST "http://localhost:8000/llm/rag/directory" \
+  -H "Content-Type: application/json" \
+  -d '{"directory": "data/initial_knowledge", "recursive": true}'
+
+# Query the system
+curl -X POST "http://localhost:8000/llm/rag/query" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is Agent Lab?", "top_k": 5}'
+```
+
+**Full documentation:** [docs/rag_guide.md](docs/rag_guide.md)
+
+## 🧠 Memory System
+
+### Using IntegratedMemoryService
+
+The project includes a **fully implemented multi-level memory system** with short-term and long-term memory capabilities using LangChain and hybrid storage (MySQL + Pinecone).
+
+**Memory Types:**
+- **Short-term Memory**: Recent conversation buffer (buffer/window/summary strategies)
+- **Semantic Memory**: Facts and knowledge extracted from conversations
+- **Episodic Memory**: Temporal summaries of conversation episodes
+- **Profile Memory**: Aggregated user characteristics and preferences
+- **Procedural Memory**: Identified interaction patterns and workflows
+
+**Quick Start:**
+
+```python
+from agentlab.core.memory_service import IntegratedMemoryService
+from agentlab.models import ChatMessage
+from datetime import datetime
+
+# Initialize memory service
+memory_service = IntegratedMemoryService()
+
+# Add messages
+memory_service.add_message(
+    session_id="user-123",
+    message=ChatMessage(
+        role="user",
+        content="I love programming in Python",
+        timestamp=datetime.now()
+    )
+)
+
+# Get enriched context (includes all memory types)
+context = memory_service.get_context("user-123")
+print(f"Short-term: {context.short_term_context}")
+print(f"Semantic facts: {context.semantic_facts}")
+print(f"User profile: {context.user_profile}")
+print(f"Patterns: {context.procedural_patterns}")
+
+# Search semantic memory
+results = memory_service.search_semantic(
+    query="Python programming",
+    top_k=5
+)
+```
+
+**Features:**
+- ✅ LangChain memory integration (Buffer, Window, Summary)
+- ✅ MySQL persistence for structured data
+- ✅ Pinecone for semantic embeddings (optional)
+- ✅ Configurable retention policies
+- ✅ Multi-session support
+- ✅ REST API endpoints
+
+**Configuration:**
+```bash
+# Database (required)
+DB_HOST=localhost
+DB_USER=your_user
+DB_PASSWORD=your_password
+DB_NAME=agent_lab
+
+# Memory strategy
+MEMORY_TYPE=buffer              # buffer, summary, or window
+ENABLE_LONG_TERM=true          # Enable semantic/episodic/profile memory
+SEMANTIC_STORAGE=hybrid        # mysql, pinecone, or hybrid
+
+# Optional: Pinecone for semantic search
+PINECONE_API_KEY=pcsk_...
+PINECONE_INDEX_NAME=agent-lab-memory
+```
+
+**Quick Test:**
+```bash
+# Run example script
+uv run python -m agentlab.examples.memory_example
+
+# Test via API
+curl -X POST "http://localhost:8000/llm/memory/context" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "user-123", "max_tokens": 2000}'
+```
+
+**Full documentation:** [docs/memory_guide.md](docs/memory_guide.md)
 
 ## 📦 Dependency Management
 
@@ -452,8 +617,10 @@ make pre-commit
 **[models.py](src/agentlab/models.py)**: Protocol definitions and data models
 - `LLMInterface`: Abstract interface for LLM implementations
 - `RAGService`: Protocol for RAG operations
-- `MPCClient/MPCServer`: MCP protocol interfaces
-- Data models: `ChatMessage`, `RAGResult`, `MPCInstanceInfo`
+- `MemoryService`: Protocol for memory operations ✨
+- `ShortTermMemory` & `LongTermMemory`: Memory sub-protocols ✨
+- `MPCClient/MPCServer`: MPC protocol interfaces
+- Data models: `ChatMessage`, `RAGResult`, `MemoryContext`, `MemoryStats` ✨
 
 **[database/](src/agentlab/database/)**: Database layer
 - [config.py](src/agentlab/database/config.py): MySQL connection configuration
@@ -464,11 +631,13 @@ make pre-commit
 - [rag_service.py](src/agentlab/core/rag_service.py): RAG implementation
 - [mpc_manager.py](src/agentlab/core/mpc_manager.py): MPC instance manager
 - [llm_interface.py](src/agentlab/core/llm_interface.py): LangChain LLM wrapper
+- [memory_service.py](src/agentlab/core/memory_service.py): Memory management ✨
 
 **[agents/](src/agentlab/agents/)**: Low-level implementations
 - [rag_processor.py](src/agentlab/agents/rag_processor.py): Embedding generation, chunking
 - [mpc_client_base.py](src/agentlab/agents/mpc_client_base.py): MPC client base class
 - [mpc_server_base.py](src/agentlab/agents/mpc_server_base.py): MPC server base class
+- [memory_processor.py](src/agentlab/agents/memory_processor.py): Long-term memory processor ✨
 
 **[api/](src/agentlab/api/)**: FastAPI application
 - [main.py](src/agentlab/api/main.py): FastAPI app entry point
@@ -481,16 +650,24 @@ make pre-commit
 - Project structure and organization
 - Protocol definitions and interfaces
 - Database schema design
-- FastAPI skeleton with routes
+- FastAPI application with routes
 - Development tooling (Makefile, testing setup)
+- **LangChain LLM integration** ✨
+- **RAG service with Pinecone** ✨
+- **Memory system (short-term & long-term)** ✨
+- Document chunking and embedding
+- Multi-tenant namespace support
+- Unit tests for RAG and memory modules
+- Database CRUD operations (MySQL)
 
 ### 🔨 To Be Implemented
-- LangChain LLM integration
-- RAG service with embeddings
 - MCP client/server implementations
-- Database CRUD operations
+- Integration tests for memory module
 - Frontend application
+- Additional document loaders (PDF, HTML, DOCX)
+- Authentication and rate limiting
 - Docker composition
+- Automatic retention policy enforcement
 
 ## 🤝 Contributing
 
@@ -513,6 +690,9 @@ This is a learning project. To contribute:
 
 ### Learning Materials
 - [AGENTS.md](AGENTS.md) - Comprehensive coding guidelines
+- [LLM Interface Guide](docs/llm_interface_guide.md) - LLM integration
+- [RAG Guide](docs/rag_guide.md) - Retrieval Augmented Generation
+- [Memory Guide](docs/memory_guide.md) - Conversation memory system ✨
 - [Frontend README](frontend/README.md) - Frontend structure
 - [Data README](data/README.md) - Data directory usage
 

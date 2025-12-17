@@ -8,12 +8,17 @@ dependencies = [
     "fastapi>=0.115.6",
     "uvicorn[standard]>=0.34.0",
     "langchain>=0.3.13",
-    "langchain-community>=0.3.13",
+    "langchain-core>=0.3.21",
     "langchain-openai>=0.2.14",
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-sqlite>=2.0.5",
     "mysql-connector-python>=9.1.0",
     "pydantic>=2.10.5",
     "python-dotenv>=1.1.1",
     "pytest>=8.4.2",
+    "pinecone>=7.3.0",
+    "langchain-pinecone>=0.2.13",
+    "langchain-text-splitters>=1.1.0",
 ]
 
 [build-system]

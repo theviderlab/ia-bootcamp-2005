@@ -43,15 +43,32 @@ OPENAI_API_KEY=tu-api-key-aquí
 
 ## Uso Básico
 
-### 1. Generación de Texto Simple
+### 1. Inicialización con Parámetros por Defecto
 
 ```python
 from agentlab.core.llm_interface import LangChainLLM
 
-# Inicializar el LLM
+# Inicializar con parámetros por defecto
+llm = LangChainLLM(
+    model_name="gpt-3.5-turbo",
+    temperature=0.7,      # Temperatura por defecto para esta instancia
+    max_tokens=1000       # Tokens máximos por defecto para esta instancia
+)
+
+# Generar texto usando los valores por defecto de la instancia
+response = llm.generate(prompt="Explica qué es machine learning")
+print(response)
+```
+
+### 2. Generación de Texto con Override de Parámetros
+
+```python
+from agentlab.core.llm_interface import LangChainLLM
+
+# Inicializar el LLM con defaults
 llm = LangChainLLM(model_name="gpt-3.5-turbo")
 
-# Generar texto
+# Generar texto con parámetros personalizados (sobrescriben los defaults)
 response = llm.generate(
     prompt="Explica qué es machine learning",
     temperature=0.7,
@@ -61,15 +78,19 @@ response = llm.generate(
 print(response)
 ```
 
-### 2. Chat con Historial
+### 3. Chat con Historial
 
 ```python
 from datetime import datetime
 from agentlab.core.llm_interface import LangChainLLM
 from agentlab.models import ChatMessage
 
-# Inicializar el LLM
-llm = LangChainLLM(model_name="gpt-3.5-turbo")
+# Inicializar el LLM con configuración para respuestas concisas
+llm = LangChainLLM(
+    model_name="gpt-3.5-turbo",
+    temperature=0.5,
+    max_tokens=300
+)
 
 # Crear historial de conversación
 messages = [
@@ -95,12 +116,44 @@ messages = [
     ),
 ]
 
-# Generar respuesta
+# Generar respuesta usando los defaults de la instancia
 response = llm.chat(messages)
 print(response)
 ```
 
-### 3. Usando GPT-4
+### 4. Chat con Override de Parámetros
+
+```python
+from datetime import datetime
+from agentlab.core.llm_interface import LangChainLLM
+from agentlab.models import ChatMessage
+
+# Inicializar con defaults
+llm = LangChainLLM(model_name="gpt-3.5-turbo")
+
+messages = [
+    ChatMessage(
+        role="system",
+        content="Eres un asistente técnico conciso.",
+        timestamp=datetime.now()
+    ),
+    ChatMessage(
+        role="user",
+        content="Explica los principios SOLID.",
+        timestamp=datetime.now()
+    ),
+]
+
+# Generar respuesta con parámetros personalizados
+response = llm.chat(
+    messages,
+    temperature=0.3,  # Más determinístico
+    max_tokens=200    # Respuesta concisa
+)
+print(response)
+```
+
+### 5. Usando GPT-4
 
 ```python
 # Usar GPT-4 en lugar de GPT-3.5
@@ -135,51 +188,99 @@ response = llm.generate(
 #### Constructor
 
 ```python
-LangChainLLM(model_name: str = "gpt-3.5-turbo", api_key: str | None = None)
+LangChainLLM(
+    model_name: str = "gpt-3.5-turbo",
+    api_key: str | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 1000
+)
 ```
 
 **Parámetros:**
 - `model_name`: Nombre del modelo a usar (ej: "gpt-3.5-turbo", "gpt-4")
 - `api_key`: API key de OpenAI (opcional, usa variable de entorno por defecto)
+- `temperature`: Temperatura por defecto para esta instancia (0.0 - 1.0)
+- `max_tokens`: Máximo de tokens por defecto para esta instancia (1 - 4000)
 
 **Raises:**
-- `ValueError`: Si no se proporciona API key
+- `ValueError`: Si no se proporciona API key o parámetros están fuera de rango
+
+**Ejemplo:**
+```python
+# Instancia con valores por defecto
+llm = LangChainLLM()
+
+# Instancia con parámetros personalizados
+llm = LangChainLLM(
+    model_name="gpt-4",
+    temperature=0.5,
+    max_tokens=500
+)
+```
 
 #### `generate()`
 
 ```python
-generate(prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> str
+generate(
+    prompt: str,
+    temperature: float | None = None,
+    max_tokens: int | None = None
+) -> str
 ```
 
 Genera texto a partir de un prompt.
 
 **Parámetros:**
 - `prompt`: Texto de entrada para el modelo
-- `temperature`: Temperatura de muestreo (0.0 - 1.0)
-- `max_tokens`: Máximo de tokens a generar
+- `temperature`: Temperatura de muestreo (0.0 - 1.0). Si no se proporciona, usa el valor de la instancia
+- `max_tokens`: Máximo de tokens a generar. Si no se proporciona, usa el valor de la instancia
 
 **Returns:** Texto generado por el modelo
 
 **Raises:**
-- `ValueError`: Si el prompt está vacío
+- `ValueError`: Si el prompt está vacío o parámetros están fuera de rango
 - `RuntimeError`: Si la generación falla
+
+**Ejemplo:**
+```python
+# Usar defaults de la instancia
+response = llm.generate("¿Qué es Python?")
+
+# Override de parámetros
+response = llm.generate("¿Qué es Python?", temperature=0.2, max_tokens=100)
+```
 
 #### `chat()`
 
 ```python
-chat(messages: list[ChatMessage]) -> str
+chat(
+    messages: list[ChatMessage],
+    temperature: float | None = None,
+    max_tokens: int | None = None
+) -> str
 ```
 
 Genera una respuesta de chat basada en el historial de conversación.
 
 **Parámetros:**
 - `messages`: Lista de objetos `ChatMessage` con el historial
+- `temperature`: Temperatura de muestreo (0.0 - 1.0). Si no se proporciona, usa el valor de la instancia
+- `max_tokens`: Máximo de tokens a generar. Si no se proporciona, usa el valor de la instancia
 
 **Returns:** Respuesta generada por el asistente
 
 **Raises:**
-- `ValueError`: Si la lista de mensajes está vacía
+- `ValueError`: Si la lista de mensajes está vacía o parámetros están fuera de rango
 - `RuntimeError`: Si la generación falla
+
+**Ejemplo:**
+```python
+# Usar defaults de la instancia
+response = llm.chat(messages)
+
+# Override de parámetros
+response = llm.chat(messages, temperature=0.3, max_tokens=200)
+```
 
 ## Testing
 

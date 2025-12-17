@@ -1,0 +1,126 @@
+{
+  "info": {
+    "_postman_id": "000049da-b73d-47a4-9742-c61325fc4359",
+    "name": "IA Bootcamp 2005",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Base info",
+      "id": "fa6c7ffa-432a-40b9-87e5-9b2a7b902fb1",
+      "request": {
+        "method": "GET",
+        "header": []
+      },
+      "response": []
+    },
+    {
+      "name": "Health",
+      "id": "cd2302c4-7af2-454e-b3e2-a04101c2f2d8",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "LLM Generate",
+      "id": "67879bec-9d16-4bd6-acb8-4ff4c0ac01df",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"prompt\": \"Escribe un poema sobre Python\",\r\n  \"temperature\": 0.7,\r\n  \"max_tokens\": 1000\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/llm/generate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "llm",
+            "generate"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "LLM Chat",
+      "id": "60cae37e-e528-4755-b44a-f53ef56972d8",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"messages\": [\r\n        {\"role\": \"system\", \"content\": \"Eres un experto en Python\"},\r\n        {\"role\": \"user\", \"content\": \"¿Cómo funcionan los decoradores?\"}\r\n    ]\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/llm/chat",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "llm",
+            "chat"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "id": "5a9b7b30-3096-4d08-8c58-6955f24c8cda",
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "id": "1345a4fa-7b02-4195-a0f6-f78ca5a80de3",
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "id": "04b8f3de-ba83-43c9-b055-037a61374428",
+      "key": "base_url",
+      "value": "",
+      "type": "default"
+    }
+  ]
+}

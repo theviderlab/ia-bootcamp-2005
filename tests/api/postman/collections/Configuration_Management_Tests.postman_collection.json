@@ -1,0 +1,857 @@
+{
+  "info": {
+    "_postman_id": "config-management-001",
+    "name": "Configuration Management Tests",
+    "description": "Tests for configuration management endpoints. These tests can be run standalone or integrated into the main Agent Lab API collection.\n\n**Prerequisites:**\n- Server running at http://localhost:8000\n- Valid OPENAI_API_KEY in environment\n- Valid PINECONE_API_KEY in environment (for RAG config tests)\n- MySQL database running and accessible (for memory config tests)\n\n**Test Coverage:**\n- GET /config/status - System configuration status\n- GET /config/session/{session_id} - Get session configuration\n- POST /config/session - Create/update session configuration\n- DELETE /config/session/{session_id} - Delete session configuration\n- PUT /config/memory - Update memory toggles\n- PUT /config/rag - Update RAG toggles\n\n**Variables used:**\n- base_url: API base URL (default: http://localhost:8000)\n- test_session_id: Generated UUID for test session",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. System Status",
+      "item": [
+        {
+          "name": "Get Configuration Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has correct structure\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"system\");",
+                  "    pm.expect(response).to.have.property(\"services\");",
+                  "    pm.expect(response).to.have.property(\"default_config\");",
+                  "});",
+                  "",
+                  "pm.test(\"System info is valid\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.system).to.have.property(\"version\");",
+                  "    pm.expect(response.system).to.have.property(\"environment\");",
+                  "});",
+                  "",
+                  "pm.test(\"Services status is provided\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.services).to.have.property(\"llm\");",
+                  "    pm.expect(response.services).to.have.property(\"memory\");",
+                  "    pm.expect(response.services).to.have.property(\"rag\");",
+                  "    ",
+                  "    // Each service should have 'available' property",
+                  "    pm.expect(response.services.llm).to.have.property(\"available\");",
+                  "    pm.expect(response.services.memory).to.have.property(\"available\");",
+                  "    pm.expect(response.services.rag).to.have.property(\"available\");",
+                  "});",
+                  "",
+                  "pm.test(\"Default configuration is defined\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.default_config).to.have.property(\"memory\");",
+                  "    pm.expect(response.default_config).to.have.property(\"rag\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Configuration status retrieved successfully\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "56fd9ce8-e31e-4623-aa2a-01d5eefc4a63",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/config/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "status"
+              ]
+            },
+            "description": "Retrieves the current system configuration status including available services and default settings."
+          },
+          "response": []
+        }
+      ],
+      "id": "1f830c3b-89c2-4a06-8203-c61f14264148",
+      "description": "Tests for system-level configuration status endpoint."
+    },
+    {
+      "name": "2. Session Configuration",
+      "item": [
+        {
+          "name": "Setup - Generate Test Session ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Generate a unique session ID for testing",
+                  "const sessionId = \"config-test-\" + Date.now();",
+                  "pm.collectionVariables.set(\"test_session_id\", sessionId);",
+                  "console.log(\"✅ Test session ID generated:\", sessionId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "70d1ce52-0cc8-4dda-b3f2-73f7e5227323",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Pre-test setup: generates a unique session ID for configuration tests."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Non-Existent Session Config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Session doesn't exist yet, should return 200 with default config",
+                  "// or 404 if implementation requires session creation first",
+                  "pm.test(\"Status code is 200 or 404\", () => {",
+                  "    pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test(\"Returns default configuration\", () => {",
+                  "        const response = pm.response.json();",
+                  "        pm.expect(response).to.have.property(\"session_id\");",
+                  "    });",
+                  "    console.log(\"✅ Returns default config for new session\");",
+                  "} else {",
+                  "    console.log(\"ℹ️  Session not found (expected for new session)\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "e35f0e4a-9e48-4f1a-b8f8-31a46f1ca200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/config/session/{{test_session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session",
+                "{{test_session_id}}"
+              ]
+            },
+            "description": "Attempts to retrieve configuration for a session that doesn't exist yet."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Session Configuration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response indicates success\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"success\");",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Response contains session_id\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"session_id\");",
+                  "    pm.expect(response.session_id).to.eql(pm.collectionVariables.get(\"test_session_id\"));",
+                  "});",
+                  "",
+                  "pm.test(\"Configuration was applied\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"config\");",
+                  "    pm.expect(response.config).to.have.property(\"memory\");",
+                  "    pm.expect(response.config).to.have.property(\"rag\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Session configuration created successfully\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "9339395a-8b12-4585-94e3-26d072a98479",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{test_session_id}}\",\n  \"memory\": {\n    \"enabled\": true,\n    \"types\": [\"semantic\", \"profile\"]\n  },\n  \"rag\": {\n    \"enabled\": true,\n    \"namespaces\": [\"docs\"],\n    \"top_k\": 3\n  },\n  \"preferences\": {\n    \"context_priority\": \"memory\",\n    \"max_context_tokens\": 3000\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session"
+              ]
+            },
+            "description": "Creates a new session configuration with custom memory and RAG settings."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Session Configuration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has correct session_id\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"session_id\");",
+                  "    pm.expect(response.session_id).to.eql(pm.collectionVariables.get(\"test_session_id\"));",
+                  "});",
+                  "",
+                  "pm.test(\"Memory configuration is present\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"memory\");",
+                  "    pm.expect(response.memory).to.have.property(\"enabled\");",
+                  "    pm.expect(response.memory).to.have.property(\"types\");",
+                  "});",
+                  "",
+                  "pm.test(\"RAG configuration is present\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"rag\");",
+                  "    pm.expect(response.rag).to.have.property(\"enabled\");",
+                  "});",
+                  "",
+                  "pm.test(\"Configuration matches what was set\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.memory.enabled).to.be.true;",
+                  "    pm.expect(response.memory.types).to.include(\"semantic\");",
+                  "    pm.expect(response.memory.types).to.include(\"profile\");",
+                  "    pm.expect(response.rag.enabled).to.be.true;",
+                  "    pm.expect(response.rag.top_k).to.eql(3);",
+                  "});",
+                  "",
+                  "console.log(\"✅ Session configuration retrieved and validated\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "eccc1bbd-efe0-4b82-a1dc-da31e6188228",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/config/session/{{test_session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session",
+                "{{test_session_id}}"
+              ]
+            },
+            "description": "Retrieves the configuration for the test session and validates it matches what was set."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Session Configuration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response indicates success\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"success\");",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Updated configuration is returned\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"config\");",
+                  "    // Check that memory types were updated",
+                  "    pm.expect(response.config.memory.types).to.include(\"semantic\");",
+                  "    pm.expect(response.config.memory.types).to.include(\"episodic\");",
+                  "    pm.expect(response.config.memory.types).to.include(\"procedural\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Session configuration updated successfully\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "f4a9d009-9140-4fc5-b31e-0dc7a63b4e76",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{test_session_id}}\",\n  \"memory\": {\n    \"enabled\": true,\n    \"types\": [\"semantic\", \"episodic\", \"procedural\"]\n  },\n  \"rag\": {\n    \"enabled\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session"
+              ]
+            },
+            "description": "Updates an existing session configuration with different settings."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Session Configuration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response indicates success\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"success\");",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Correct session_id in response\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"session_id\");",
+                  "    pm.expect(response.session_id).to.eql(pm.collectionVariables.get(\"test_session_id\"));",
+                  "});",
+                  "",
+                  "console.log(\"✅ Session configuration deleted successfully\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "7fb7d874-f157-4267-ba21-a52672fdb1b1",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/config/session/{{test_session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session",
+                "{{test_session_id}}"
+              ]
+            },
+            "description": "Deletes the test session configuration. Session will revert to default settings."
+          },
+          "response": []
+        }
+      ],
+      "id": "52999725-f01c-4edb-ad65-501b47a03b64",
+      "description": "Tests for session-specific configuration management: create, read, update, delete."
+    },
+    {
+      "name": "3. Memory Configuration",
+      "item": [
+        {
+          "name": "Update Memory Config - Enable All Types",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response indicates success\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"success\");",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Configuration is returned\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"config\");",
+                  "    pm.expect(response.config).to.have.property(\"enabled\");",
+                  "    pm.expect(response.config).to.have.property(\"types\");",
+                  "});",
+                  "",
+                  "pm.test(\"Memory is enabled with all types\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.enabled).to.be.true;",
+                  "    pm.expect(response.config.types).to.include.members([\"semantic\", \"episodic\", \"profile\", \"procedural\"]);",
+                  "});",
+                  "",
+                  "console.log(\"✅ Memory configuration updated - all types enabled\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "d9bb8d3b-f329-4e2c-ba52-e4bb7675fe87",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"types\": [\"semantic\", \"episodic\", \"profile\", \"procedural\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "memory"
+              ]
+            },
+            "description": "Updates global memory configuration to enable all memory types."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Memory Config - Disable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Memory is disabled\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.enabled).to.be.false;",
+                  "});",
+                  "",
+                  "console.log(\"✅ Memory configuration updated - disabled\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "1b7fc368-44fd-4e9b-a22c-47da03548ced",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "memory"
+              ]
+            },
+            "description": "Disables memory globally."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Memory Config - Specific Types",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Only specified types are enabled\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.enabled).to.be.true;",
+                  "    pm.expect(response.config.types).to.have.lengthOf(2);",
+                  "    pm.expect(response.config.types).to.include(\"semantic\");",
+                  "    pm.expect(response.config.types).to.include(\"profile\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Memory configuration updated - specific types only\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "0d5bc08f-556b-459a-82a8-a65aa7c99a69",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"types\": [\"semantic\", \"profile\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "memory"
+              ]
+            },
+            "description": "Enables only specific memory types (semantic and profile)."
+          },
+          "response": []
+        }
+      ],
+      "id": "72c8fff7-c0ad-407a-95fa-f203e7bb2787",
+      "description": "Tests for memory configuration toggles."
+    },
+    {
+      "name": "4. RAG Configuration",
+      "item": [
+        {
+          "name": "Update RAG Config - Enable with Namespaces",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response indicates success\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"success\");",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"RAG configuration is returned\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"config\");",
+                  "    pm.expect(response.config).to.have.property(\"enabled\");",
+                  "    pm.expect(response.config).to.have.property(\"namespaces\");",
+                  "    pm.expect(response.config).to.have.property(\"top_k\");",
+                  "});",
+                  "",
+                  "pm.test(\"RAG is enabled with specified settings\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.enabled).to.be.true;",
+                  "    pm.expect(response.config.namespaces).to.include.members([\"docs\", \"api\"]);",
+                  "    pm.expect(response.config.top_k).to.eql(5);",
+                  "});",
+                  "",
+                  "console.log(\"✅ RAG configuration updated - enabled with namespaces\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "630efd40-0911-4648-b997-6673a8d5571d",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"namespaces\": [\"docs\", \"api\"],\n  \"top_k\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/rag",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "rag"
+              ]
+            },
+            "description": "Enables RAG with specific namespaces and top_k value."
+          },
+          "response": []
+        },
+        {
+          "name": "Update RAG Config - Disable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"RAG is disabled\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.enabled).to.be.false;",
+                  "});",
+                  "",
+                  "console.log(\"✅ RAG configuration updated - disabled\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "7a3e361b-0f5b-45ca-87b4-36fa41906388",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/rag",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "rag"
+              ]
+            },
+            "description": "Disables RAG globally."
+          },
+          "response": []
+        },
+        {
+          "name": "Update RAG Config - Change top_k",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"top_k was updated\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.config.top_k).to.eql(10);",
+                  "});",
+                  "",
+                  "console.log(\"✅ RAG configuration updated - top_k changed\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "b990ddd5-4fdb-437a-b704-ac9072e0e5f8",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"top_k\": 10\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/rag",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "rag"
+              ]
+            },
+            "description": "Updates RAG top_k parameter to retrieve more documents."
+          },
+          "response": []
+        }
+      ],
+      "id": "b531ea1b-334f-4e4f-8881-677964d7667b",
+      "description": "Tests for RAG configuration toggles."
+    },
+    {
+      "name": "5. Validation Errors",
+      "item": [
+        {
+          "name": "Session Config - Missing session_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 422\", () => {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test(\"Error detail is present\", () => {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property(\"detail\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Validation error handled correctly\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "2fb91ea0-5eee-4176-8f11-263838c04a25",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memory\": {\"enabled\": true}\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "session"
+              ]
+            },
+            "description": "Tests validation when session_id is missing from session config request."
+          },
+          "response": []
+        },
+        {
+          "name": "Memory Config - Invalid type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 422 or 400\", () => {",
+                  "    pm.expect([400, 422]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "console.log(\"✅ Invalid memory type rejected\");"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "6facdca8-76fd-41ad-abda-950f66de3b4f",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"types\": [\"invalid_type\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "memory"
+              ]
+            },
+            "description": "Tests validation of memory types - only semantic, episodic, profile, procedural are valid."
+          },
+          "response": []
+        }
+      ],
+      "id": "3e09a0d3-5c29-401e-8ba2-96099939dc07",
+      "description": "Tests for validation errors in configuration endpoints."
+    }
+  ],
+  "variable": [
+    {
+      "id": "1f679801-26b5-4f9e-9963-58c00d6b8aea",
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "default"
+    },
+    {
+      "id": "8adffe1d-c9d0-4dd2-95b3-96fd267f23f7",
+      "key": "test_session_id",
+      "value": ""
+    }
+  ]
+}

@@ -8,7 +8,7 @@ api:
 
 setup-db:
 	@echo "Setting up database..."
-	uv run python -m agentlab.database.setup
+	uv run python -m agentlab.database
 
 test: test-unit test-integration
 	@echo "All tests completed successfully"
