@@ -11,6 +11,15 @@ Agent Lab is designed for learning and experimentation with:
 - **Memory Systems**: Multi-level conversation memory (short-term, semantic, episodic, profile, procedural)
 - **API Development**: Creating production-ready FastAPI applications
 
+## 📚 Documentation
+
+- **[API Reference](docs/API.md)**: Complete API documentation and endpoints.
+- **[Configuration Guide](docs/CONFIGURATION.md)**: Dynamic configuration system for Memory and RAG.
+- **[LLM Integration](docs/LLM.md)**: Guide to using the LangChain LLM wrapper.
+- **[MCP Protocol](docs/MCP.md)**: Model Context Protocol implementation details.
+- **[Memory System](docs/MEMORY.md)**: Comprehensive guide to the multi-level memory system.
+- **[RAG System](docs/RAG.md)**: Guide to Retrieval Augmented Generation with Pinecone.
+
 ## 🏗️ Architecture
 
 ```

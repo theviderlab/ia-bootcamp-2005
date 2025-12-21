@@ -4,16 +4,31 @@ Esta documentación describe los endpoints de la API para interactuar con el mod
 
 ## Configuración
 
-Antes de usar la API, configura tu clave de API de OpenAI:
+Antes de usar la API, asegúrate de tener las variables de entorno necesarias.
+
+### Variables de Entorno
+
+Crea un archivo `.env` en la raíz del proyecto con las siguientes variables:
 
 ```bash
-export OPENAI_API_KEY="tu-clave-api"
+# OpenAI (Requerido para LLM y Embeddings)
+OPENAI_API_KEY=tu-clave-openai
+
+# Pinecone (Requerido para RAG y Memoria Semántica)
+PINECONE_API_KEY=tu-clave-pinecone
+PINECONE_ENVIRONMENT=tu-environment
+PINECONE_INDEX_NAME=tu-index
+
+# Base de Datos (Requerido para Memoria)
+# Asegúrate de que tu instancia MySQL esté corriendo
 ```
 
-O crea un archivo `.env` en la raíz del proyecto:
+### Verificación de Base de Datos
 
-```
-OPENAI_API_KEY=tu-clave-api
+Verifica que tu base de datos MySQL esté corriendo y accesible:
+
+```bash
+mysql -u root -p -e "SHOW DATABASES;"
 ```
 
 ## Iniciar el servidor
@@ -74,7 +89,9 @@ Información sobre la API y sus endpoints.
       "status": "/config/status",
       "get_session": "/config/session/{session_id}",
       "update_session": "/config/session",
-      "delete_session": "/config/session/{session_id}"
+      "delete_session": "/config/session/{session_id}",
+      "update_memory": "/config/memory",
+      "update_rag": "/config/rag"
     },
     "mpc": {
       "create_instance": "/mpc/instances",
@@ -187,9 +204,41 @@ Genera una respuesta de chat basada en el historial de conversación.
 ```json
 {
   "response": "Las principales ventajas de FastAPI son...",
-  "session_id": "uuid-generado-o-proporcionado"
+  "session_id": "uuid-generado-o-proporcionado",
+  "context_text": "## Recent Conversation\n[User]: Hola\n[Assistant]: Hola, ¿en qué puedo ayudarte?\n\n## Relevant Knowledge Base Documents\n### Document 1 (namespace: docs)\n**ID**: fastapi_intro\nFastAPI es un framework web moderno...",
+  "context_tokens": 245,
+  "rag_sources": [
+    {
+      "content": "FastAPI es un framework web moderno para construir APIs con Python...",
+      "score": 0.92,
+      "doc_id": "fastapi_intro",
+      "namespace": "docs",
+      "chunk_index": 0
+    },
+    {
+      "content": "Las principales ventajas de FastAPI incluyen...",
+      "score": 0.87,
+      "doc_id": "fastapi_features",
+      "namespace": "docs",
+      "chunk_index": 2
+    }
+  ]
 }
 ```
+
+**Campos de respuesta:**
+- `response` (string): La respuesta generada por el LLM
+- `session_id` (string): ID de sesión (generado o proporcionado)
+- `context_text` (string): Contexto completo enviado al LLM, incluyendo memoria y RAG, formateado como texto plano con secciones markdown
+- `context_tokens` (int): Número exacto de tokens del contexto (calculado con tiktoken)
+- `rag_sources` (array): Lista de documentos RAG utilizados con sus scores de similitud
+  - `content` (string): Contenido del chunk del documento
+  - `score` (float): Score de similitud (0-1, donde 1 es más similar)
+  - `doc_id` (string): Identificador del documento fuente
+  - `namespace` (string): Namespace de Pinecone donde está almacenado
+  - `chunk_index` (int|null): Índice del chunk dentro del documento
+
+**Nota**: Los campos `context_text` y `rag_sources` siempre se incluyen en la respuesta. Si no hay contexto disponible, `context_text` será una cadena vacía, `context_tokens` será 0, y `rag_sources` será un array vacío.
 
 **Ejemplo con curl:**
 ```bash
@@ -213,6 +262,62 @@ curl -X POST "http://localhost:8000/llm/chat" \
     "messages": [
       {"role": "user", "content": "Hola, ¿cómo estás?"}
     ]
+  }'
+```
+
+### Ejemplos de Configuración Dinámica
+
+#### 1. Chat sin memoria ni RAG (básico)
+
+```bash
+curl -X POST http://localhost:8000/llm/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello"}],
+    "use_memory": false,
+    "use_rag": false
+  }'
+```
+
+#### 2. Chat solo con memoria short-term
+
+```bash
+curl -X POST http://localhost:8000/llm/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "What did we discuss?"}],
+    "session_id": "my-session",
+    "use_memory": true,
+    "use_rag": false
+  }'
+```
+
+#### 3. Chat con RAG específico por namespace
+
+```bash
+curl -X POST http://localhost:8000/llm/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "How to use FastAPI?"}],
+    "use_memory": false,
+    "use_rag": true,
+    "rag_namespaces": ["fastapi_docs"],
+    "rag_top_k": 3
+  }'
+```
+
+#### 4. Chat con memoria + RAG combinados
+
+```bash
+curl -X POST http://localhost:8000/llm/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Based on what I told you, recommend a framework"}],
+    "session_id": "my-session",
+    "use_memory": true,
+    "use_rag": true,
+    "rag_namespaces": ["frameworks"],
+    "context_priority": "balanced"
   }'
 ```
 
@@ -386,6 +491,137 @@ curl -X DELETE "http://localhost:8000/llm/rag/namespace/test-namespace"
 ```
 
 **⚠️ Advertencia:** Esta operación es irreversible. Todos los documentos en el namespace serán eliminados permanentemente.
+
+### 7ter. Listar Namespaces RAG
+
+**GET** `/llm/rag/namespaces`
+
+Lista todos los namespaces disponibles en el sistema RAG con información sobre el número de documentos, chunks y última actualización. Combina datos de Pinecone (vectores) y MySQL (metadatos de documentos).
+
+**Respuesta:**
+```json
+{
+  "namespaces": [
+    {
+      "name": "default",
+      "document_count": 10,
+      "total_chunks": 150,
+      "last_updated": "2025-12-20T10:30:00"
+    },
+    {
+      "name": "docs",
+      "document_count": 5,
+      "total_chunks": 75,
+      "last_updated": "2025-12-19T15:45:00"
+    }
+  ]
+}
+```
+
+**Campos de respuesta:**
+- `namespaces` (array): Lista de namespaces disponibles
+  - `name` (string): Nombre del namespace ("default" para namespace vacío)
+  - `document_count` (int): Número de documentos únicos
+  - `total_chunks` (int): Número total de chunks/vectores almacenados
+  - `last_updated` (string): Timestamp ISO de última actualización
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/llm/rag/namespaces"
+```
+
+**Casos de uso:**
+- Explorar qué namespaces están disponibles en el sistema
+- Verificar el estado de la base de conocimiento
+- Monitorear el crecimiento de documentos por namespace
+- Interfaz de usuario para seleccionar namespaces
+
+### 7quater. Listar Documentos RAG
+
+**GET** `/llm/rag/documents`
+
+Lista todos los documentos en la base de conocimiento con sus metadatos. Soporta filtrado por namespace y paginación para manejar grandes volúmenes de documentos.
+
+**Query Parameters:**
+- `namespace` (string, opcional): Filtrar por namespace específico. Use "default" para el namespace vacío.
+- `limit` (int, opcional): Número máximo de documentos a retornar (1-1000). Default: 100
+- `offset` (int, opcional): Número de documentos a saltar para paginación. Default: 0
+
+**URL de ejemplo:**
+```
+GET /llm/rag/documents?namespace=docs&limit=50&offset=0
+```
+
+**Respuesta:**
+```json
+{
+  "documents": [
+    {
+      "id": "doc-abc123",
+      "filename": "api_guide.md",
+      "namespace": "docs",
+      "chunk_count": 15,
+      "file_size": 12800,
+      "uploaded_at": "2025-12-20T09:15:00"
+    },
+    {
+      "id": "doc-def456",
+      "filename": "readme.txt",
+      "namespace": "default",
+      "chunk_count": 8,
+      "file_size": 4096,
+      "uploaded_at": "2025-12-19T14:20:00"
+    }
+  ],
+  "total_count": 25,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+**Campos de respuesta:**
+- `documents` (array): Lista de documentos
+  - `id` (string): ID único del documento
+  - `filename` (string): Nombre original del archivo
+  - `namespace` (string): Namespace del documento
+  - `chunk_count` (int): Número de chunks en que se dividió
+  - `file_size` (int): Tamaño del archivo en bytes
+  - `uploaded_at` (string): Timestamp ISO de carga
+- `total_count` (int): Número total de documentos que coinciden con el filtro
+- `limit` (int): Límite aplicado
+- `offset` (int): Offset aplicado
+- `has_more` (bool): Indica si hay más documentos disponibles
+
+**Ejemplos con curl:**
+
+```bash
+# Listar todos los documentos (primera página)
+curl "http://localhost:8000/llm/rag/documents?limit=100&offset=0"
+
+# Filtrar por namespace específico
+curl "http://localhost:8000/llm/rag/documents?namespace=docs&limit=50"
+
+# Paginación - segunda página
+curl "http://localhost:8000/llm/rag/documents?limit=50&offset=50"
+
+# Filtrar namespace "default" (documentos sin namespace)
+curl "http://localhost:8000/llm/rag/documents?namespace=default"
+```
+
+**Casos de uso:**
+- Interfaz de usuario para explorar documentos cargados
+- Auditoría de la base de conocimiento
+- Selección de documentos específicos para consultas
+- Verificar qué archivos están indexados
+- Implementar búsqueda y filtrado en el frontend
+- Monitorear el tamaño y distribución de documentos
+
+**Notas:**
+- El `limit` está restringido entre 1 y 1000 para evitar respuestas excesivamente grandes
+- Use el flag `has_more` para determinar si debe cargar más páginas
+- Los documentos están ordenados por `uploaded_at` descendente (más recientes primero)
+- El campo `chunk_count` indica en cuántos fragmentos se dividió el documento original
 
 ### 8. Gestión de Memoria (Memory Operations)
 
@@ -794,6 +1030,135 @@ DELETE /config/session/mi-sesion-123
 curl -X DELETE "http://localhost:8000/config/session/mi-sesion-123"
 ```
 
+### 10. System Reset
+
+Endpoints para reiniciar el sistema completo. ⚠️ **USO CON EXTREMA PRECAUCIÓN**.
+
+#### 10.1 Reset Total del Sistema
+
+**POST** `/session/reset-all`
+
+Opción nuclear: Elimina TODOS los datos del sistema de forma permanente e irreversible.
+
+**¿Qué se elimina?**
+- ✅ Todo el historial de conversaciones (todas las sesiones)
+- ✅ Toda la memoria de largo plazo (hechos semánticos, resúmenes episódicos, perfil de usuario, patrones procedimentales)
+- ✅ Todos los documentos RAG de la base de datos MySQL
+- ✅ Todos los vectores de Pinecone (todos los namespaces)
+- ✅ Todas las configuraciones de sesión
+- ✅ Todas las instancias MPC registradas
+
+**Request Body:**
+```json
+{
+  "confirmation": "DELETE"
+}
+```
+
+**Parámetros:**
+- `confirmation` (string, requerido): Debe ser exactamente "DELETE" (case-sensitive) para confirmar la operación.
+
+**Respuesta exitosa:**
+```json
+{
+  "success": true,
+  "message": "All data deleted. System restored to initial state.",
+  "deleted": {
+    "sessions": 15,
+    "memory_entries": 234,
+    "rag_documents": 45,
+    "vector_count": 1230
+  }
+}
+```
+
+**Campos de respuesta:**
+- `success` (bool): Indica si la operación fue exitosa
+- `message` (string): Mensaje descriptivo
+- `deleted` (object): Contadores de elementos eliminados
+  - `sessions` (int): Número de sesiones únicas eliminadas
+  - `memory_entries` (int): Número de mensajes de chat eliminados
+  - `rag_documents` (int): Número de documentos RAG eliminados de MySQL
+  - `vector_count` (int): Número de vectores eliminados de Pinecone
+
+**Errores:**
+
+**400 - Confirmación inválida:**
+```json
+{
+  "detail": "Invalid confirmation. Must be exactly 'DELETE' to proceed."
+}
+```
+
+**422 - Validación fallida:**
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "confirmation"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+**500 - Error del servidor:**
+```json
+{
+  "detail": "Failed to reset system: [error details]"
+}
+```
+
+**Ejemplo con curl:**
+```bash
+curl -X POST "http://localhost:8000/session/reset-all" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "confirmation": "DELETE"
+  }'
+```
+
+**⚠️ ADVERTENCIAS IMPORTANTES:**
+
+1. **Esta operación es IRREVERSIBLE**: No hay forma de recuperar los datos una vez eliminados.
+
+2. **Requiere confirmación exacta**: El string "DELETE" debe ser exacto (case-sensitive).
+
+3. **Funciona sin Pinecone**: Si Pinecone no está configurado, el endpoint seguirá funcionando pero `vector_count` será 0.
+
+4. **Errores parciales**: Si alguna parte de la eliminación falla (por ejemplo, Pinecone), la operación continúa con las otras partes. Revisa los logs del servidor para detalles.
+
+5. **No afecta configuración**: Las variables de entorno (`.env`) y la estructura de la base de datos (tablas) NO se eliminan.
+
+**Casos de uso legítimos:**
+- Testing y desarrollo local
+- Limpiar datos de prueba
+- Restaurar sistema a estado inicial
+- Preparación para demo
+
+**NO usar en producción a menos que**:
+- Tengas backups completos
+- Entiendas completamente las consecuencias
+- Tengas autorización explícita
+
+#### 10.2 Reset de Sesión Individual
+
+**POST** `/session/reset`
+
+Alternativa más segura: Reinicia solo una sesión específica generando un nuevo ID.
+
+Ver documentación completa en la sección de Session Management.
+
+**Diferencias clave con `/reset-all`:**
+- ✅ Solo elimina historial de chat (memoria de corto plazo)
+- ✅ Preserva memoria de largo plazo
+- ✅ Preserva documentos RAG
+- ✅ No requiere confirmación "DELETE"
+- ✅ Seguro para uso en producción
+
+
+
 #### 9.5 Actualizar Toggles de Memoria
 
 **PUT** `/config/memory`
@@ -882,6 +1247,289 @@ curl -X PUT "http://localhost:8000/config/rag" \
     "top_k": 3
   }'
 ```
+
+### 10. Gestión de Sesiones (Session Management)
+
+Los endpoints de sesión permiten resetear conversaciones individuales o realizar un reset completo del sistema.
+
+#### 10.1 Resetear Sesión
+
+**POST** `/session/reset`
+
+Crea una nueva sesión y limpia **TODA** la memoria de corto plazo (buffer de conversación de TODAS las sesiones) mientras preserva la memoria de largo plazo (hechos semánticos, episodios, perfil de usuario, patrones procedimentales) y los documentos RAG.
+
+**⚠️ Nota Importante:** Este endpoint elimina el historial de chat de **todas las sesiones**, no solo la sesión actual. Esto es porque el sistema está diseñado para trabajar con una sesión activa a la vez.
+
+**Request Body:**
+```json
+{
+  "current_session_id": "session-abc-123"
+}
+```
+
+**Parámetros:**
+- `current_session_id` (string, requerido): ID de la sesión actual (se usa para referencia pero se eliminan todas las sesiones)
+
+**Respuesta:**
+```json
+{
+  "success": true,
+  "new_session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "Session reset successfully. Short-term memory cleared (15 messages)."
+}
+```
+
+**Campos de respuesta:**
+- `success` (bool): Indica si el reset fue exitoso
+- `new_session_id` (string): UUID de la nueva sesión generada
+- `message` (string): Mensaje descriptivo con el número de mensajes eliminados
+
+**Ejemplo con curl:**
+```bash
+curl -X POST "http://localhost:8000/session/reset" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_session_id": "session-abc-123"
+  }'
+```
+
+**Errores posibles:**
+- `500 Internal Server Error`: Si falla la operación de base de datos
+
+**Casos de Uso:**
+- Iniciar una conversación completamente nueva sin el historial de mensajes previos
+- Limpiar el contexto conversacional sin afectar los documentos RAG cargados
+- Mantener la configuración de memoria/RAG mientras se limpia el historial de chat
+- Resetear el estado conversacional del sistema manteniendo el conocimiento indexado
+
+**Diferencia con `/session/reset-all`:**
+- `/session/reset`: Solo elimina historial de chat (short-term memory)
+- `/session/reset-all`: Elimina TODO (chat, memoria, RAG, configuraciones)
+
+#### 10.2 Reset Completo del Sistema (Opción Nuclear)
+
+**DELETE** `/session/reset-all`
+
+Elimina TODOS los datos del sistema de forma permanente. Esta operación es irreversible y debe usarse con precaución.
+
+**⚠️ ADVERTENCIA:** Esta operación elimina:
+- Todo el historial de conversaciones (todas las sesiones)
+- Toda la memoria de largo plazo (semántica, episódica, perfil, procedimental)
+- Todos los documentos y vectores RAG
+- Todas las configuraciones de sesión
+- Todas las instancias MPC
+
+**Request Body:**
+```json
+{
+  "confirmation": "DELETE"
+}
+```
+
+**Parámetros:**
+- `confirmation` (string, requerido): Debe ser exactamente "DELETE" para confirmar la operación.
+
+**Respuesta:**
+```json
+{
+  "success": true,
+  "message": "All data deleted. System restored to initial state.",
+  "deleted": {
+    "sessions": 15,
+    "memory_entries": 234,
+    "rag_documents": 45,
+    "vector_count": 1230
+  }
+}
+```
+
+**Ejemplo con curl:**
+```bash
+curl -X POST "http://localhost:8000/session/reset-all" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "confirmation": "DELETE"
+  }'
+```
+
+**Casos de Uso:**
+- Cambiar de proyecto completamente
+- Limpiar datos de prueba durante desarrollo
+- Reset completo para empezar desde cero
+- Preparar el sistema para un nuevo usuario o contexto
+
+**Errores Comunes:**
+```json
+// Error 400: Confirmación incorrecta
+{
+  "detail": "Invalid confirmation. Must be exactly 'DELETE' to proceed."
+}
+```
+
+### 11. Listado de Recursos RAG
+
+Endpoints para descubrir y listar los documentos y namespaces disponibles en el sistema RAG.
+
+#### 11.1 Listar Namespaces RAG
+
+**GET** `/llm/rag/namespaces`
+
+Obtiene la lista de todos los namespaces disponibles en Pinecone con estadísticas de documentos y chunks.
+
+**Respuesta:**
+```json
+{
+  "namespaces": [
+    {
+      "name": "docs",
+      "document_count": 15,
+      "total_chunks": 230,
+      "last_updated": "2025-12-20T10:00:00"
+    },
+    {
+      "name": "api",
+      "document_count": 8,
+      "total_chunks": 120,
+      "last_updated": "2025-12-19T15:30:00"
+    }
+  ]
+}
+```
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/llm/rag/namespaces"
+```
+
+**Casos de Uso:**
+- Mostrar namespaces disponibles en la UI para selección
+- Verificar qué colecciones de documentos están disponibles
+- Obtener estadísticas de cada namespace
+
+#### 11.2 Listar Documentos RAG
+
+**GET** `/llm/rag/documents`
+
+Obtiene la lista de todos los documentos RAG con metadata detallada. Puede filtrarse por namespace.
+
+**Query Parameters:**
+- `namespace` (string, opcional): Filtrar documentos por namespace específico.
+
+**URL de ejemplo:**
+```
+GET /llm/rag/documents?namespace=docs
+```
+
+**Respuesta:**
+```json
+{
+  "documents": [
+    {
+      "id": "doc-uuid-123",
+      "filename": "manual.pdf",
+      "namespace": "docs",
+      "chunk_count": 45,
+      "uploaded_at": "2025-12-20T10:00:00",
+      "file_size": 102400
+    },
+    {
+      "id": "doc-uuid-456",
+      "filename": "api_reference.md",
+      "namespace": "docs",
+      "chunk_count": 32,
+      "uploaded_at": "2025-12-19T14:30:00",
+      "file_size": 81920
+    }
+  ]
+}
+```
+
+**Ejemplo con curl:**
+```bash
+# Todos los documentos
+curl "http://localhost:8000/llm/rag/documents"
+
+# Documentos de un namespace específico
+curl "http://localhost:8000/llm/rag/documents?namespace=docs"
+```
+
+**Casos de Uso:**
+- Mostrar documentos individuales en la UI para selección granular
+- Obtener información sobre qué archivos están indexados
+- Implementar filtrado y búsqueda de documentos en el frontend
+
+### 12. Visualización de Contexto
+
+Endpoints para obtener información sobre las consultas RAG y el contexto completo enviado al LLM.
+
+#### 12.1 Obtener Últimos Resultados RAG
+
+**GET** `/llm/rag/last-results`
+
+Recupera los resultados de la última consulta RAG realizada en una sesión, incluyendo los chunks recuperados, sus scores de similitud y metadata.
+
+**Query Parameters:**
+- `session_id` (string, requerido): ID de la sesión.
+
+**URL de ejemplo:**
+```
+GET /llm/rag/last-results?session_id=session-123
+```
+
+**Respuesta:**
+```json
+{
+  "session_id": "session-123",
+  "results": {
+    "query": "How do I configure RAG?",
+    "timestamp": "2025-12-20T10:30:00",
+    "chunks": [
+      {
+        "id": "chunk-123",
+        "content": "RAG configuration requires setting up Pinecone and OpenAI API keys...",
+        "score": 0.92,
+        "metadata": {
+          "source": "docs/config.md",
+          "namespace": "docs",
+          "page": 5
+        }
+      },
+      {
+        "id": "chunk-456",
+        "content": "To enable RAG in a conversation, use the use_rag parameter...",
+        "score": 0.87,
+        "metadata": {
+          "source": "docs/api.md",
+          "namespace": "docs",
+          "page": 12
+        }
+      }
+    ],
+    "namespace": "docs",
+    "top_k": 5
+  }
+}
+```
+
+**Respuesta sin resultados:**
+```json
+{
+  "session_id": "session-123",
+  "results": null
+}
+```
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/llm/rag/last-results?session_id=session-123"
+```
+
+**Casos de Uso:**
+- Mostrar en el tab "RAG Results" qué documentos influyeron en la respuesta
+- Debugging: verificar qué chunks fueron recuperados
+- Transparencia: mostrar al usuario las fuentes de información
+
+**⚠️ DEPRECADO**: Este endpoint está marcado como deprecado. La información de RAG ahora se incluye directamente en la respuesta del endpoint `/llm/chat` en el campo `rag_sources`. Use ese endpoint en su lugar.
 
 ## Códigos de Estado HTTP
 
@@ -1182,7 +1830,9 @@ else:
 
 ## Testing
 
-Ejecutar los tests unitarios:
+### Tests Unitarios
+
+Ejecutar los tests unitarios y de integración:
 
 ```bash
 # Todos los tests
@@ -1190,6 +1840,67 @@ make test-unit
 
 # Solo tests de API
 uv run pytest tests/unit/test_chat_routes.py -v
+```
+
+### Verificación de Código
+
+Antes de enviar cambios, verifica el formato y linting:
+
+```bash
+# Formatear código
+make format
+
+# Verificar linting
+make lint
+```
+
+## Testing con Postman
+
+Para ejecutar la suite de pruebas de integración con Postman:
+
+1. **Instalar Newman** (si no está instalado):
+   ```bash
+   npm install -g newman
+   ```
+
+2. **Ejecutar colección principal**:
+   ```bash
+   cd tests/api/postman/collections
+   
+   newman run Agent_Lab_API.postman_collection.json \
+     --env-var "base_url=http://localhost:8000" \
+     --env-var "test_namespace=postman-test-$(date +%s)"
+   ```
+
+3. **Ejecutar colección de configuración**:
+   ```bash
+   newman run Configuration_Management_Tests.postman_collection.json \
+     --env-var "base_url=http://localhost:8000"
+   ```
+
+## Troubleshooting
+
+### Error: "Failed to initialize RAG service"
+**Causa:** Faltan las credenciales de Pinecone o el índice no existe.
+**Solución:** Verifica que `PINECONE_API_KEY` está configurada en el `.env` y que el índice especificado en `PINECONE_INDEX_NAME` existe en tu consola de Pinecone.
+
+### Error: "Database connection failed"
+**Causa:** La base de datos MySQL no está corriendo o las credenciales son incorrectas.
+**Solución:** Verifica que el servicio MySQL está activo y que las credenciales en el `.env` coinciden con tu configuración local.
+
+### Error: Tests fallan en Newman
+**Causa:** El servidor API no está corriendo.
+**Solución:** Asegúrate de iniciar el servidor en una terminal separada antes de ejecutar los tests:
+```bash
+uv run uvicorn agentlab.api.main:app --reload
+```
+
+### Error: "Module not found"
+**Causa:** Dependencias desactualizadas o entorno virtual corrupto.
+**Solución:** Reinstalar dependencias:
+```bash
+rm -rf .venv
+uv sync
 ```
 
 ## Notas

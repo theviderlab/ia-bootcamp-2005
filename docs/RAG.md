@@ -2,6 +2,67 @@
 
 Complete guide to using the **Retrieval Augmented Generation (RAG)** system in Agent Lab, powered by Pinecone and LangChain.
 
+## Quick Start
+
+Get up and running with the RAG system in 5 minutes.
+
+### 1. Install Dependencies
+
+```bash
+# Add required packages
+uv add pinecone langchain-pinecone langchain-text-splitters
+
+# Sync all dependencies
+uv sync
+```
+
+### 2. Set Up Environment
+
+Create `.env` file with your API keys:
+
+```bash
+# Required
+OPENAI_API_KEY=sk-...                    # OpenAI API key for embeddings
+PINECONE_API_KEY=pcsk_...                # Pinecone API key
+PINECONE_INDEX_NAME=agent-lab-index      # Name for your Pinecone index
+PINECONE_CLOUD=aws                       # Cloud provider (aws, gcp, azure)
+PINECONE_REGION=us-east-1                # Region for serverless index
+```
+
+### 3. Run the Example
+
+```bash
+uv run python -m agentlab.examples.rag_example
+```
+
+This will initialize the RAG service, create the Pinecone index (if needed), add sample documents, and run example queries.
+
+### 4. Try the API
+
+Start the server:
+
+```bash
+make api
+# or
+uv run uvicorn agentlab.api.main:app --reload
+```
+
+Then use the API to add documents and query:
+
+```bash
+# Add documents from a directory
+curl -X POST "http://localhost:8000/llm/rag/directory" \
+  -H "Content-Type: application/json" \
+  -d '{ "directory": "data/initial_knowledge", "recursive": true }'
+
+# Query the knowledge base
+curl -X POST "http://localhost:8000/llm/rag/query" \
+  -H "Content-Type: application/json" \
+  -d '{ "query": "What is Agent Lab?", "top_k": 5 }'
+```
+
+---
+
 ## Overview
 
 The RAG system enhances LLM responses by retrieving relevant information from a knowledge base before generating answers. This allows the LLM to:
@@ -34,6 +95,54 @@ The RAG system enhances LLM responses by retrieving relevant information from a 
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Data Storage Architecture
+
+The system uses a dual-storage approach for optimal performance:
+
+| Storage | Purpose | Data Stored |
+|---------|---------|-------------|
+| **Pinecone** | Vector search | Document embeddings, chunk content, basic metadata |
+| **MySQL** | Metadata & management | Document details, filenames, sizes, timestamps, namespace stats |
+
+**Integration Points:**
+- When adding documents: Store vectors in Pinecone + metadata in MySQL
+- When querying: Search Pinecone for relevant chunks, optionally enrich with MySQL metadata
+- When listing: Combine Pinecone namespace stats with MySQL document metadata
+
+**Namespace Mapping:**
+- Empty namespace (`""`) in database is displayed as `"default"` in API responses
+- API accepts `"default"` and converts to `""` for database queries
+
+## Implementation Details
+
+The RAG system is built with a clean separation of concerns:
+
+### Core Components
+
+- **`src/agentlab/core/rag_service.py`**: The main `RAGServiceImpl` class. It handles:
+    - Pinecone index initialization and management.
+    - Embedding generation using `LangChain` and `OpenAI`.
+    - Document retrieval and context building.
+    - LLM response generation with augmented prompts.
+- **`src/agentlab/agents/rag_processor.py`**: Low-level helper functions for:
+    - `chunk_document`: Splitting text into overlapping chunks.
+    - `generate_document_id`: Creating stable IDs for deduplication.
+    - `preprocess_text`: Cleaning text before processing.
+- **`src/agentlab/config/rag_config.py`**: Configuration management using Pydantic/Dataclasses to load settings from environment variables.
+
+### Document Loading
+
+- **`src/agentlab/loaders/`**: Extensible loader system.
+    - `registry.py`: Manages supported file types.
+    - `text_loader.py`: Handles `.txt`, `.md`, `.log` files.
+
+### Key Features
+
+1.  **Automatic Index Management**: The `ensure_index_exists()` method checks for the Pinecone index and creates it with the correct settings (Serverless, Cosine metric) if missing.
+2.  **Namespace Isolation**: Supports multi-tenancy by allowing documents to be stored and queried within specific Pinecone namespaces.
+3.  **Smart Chunking**: Uses `RecursiveCharacterTextSplitter` to respect sentence and paragraph boundaries.
+4.  **Deduplication**: Generates deterministic IDs based on content hash to prevent duplicate entries when re-indexing.
 
 ## Setup
 
@@ -76,6 +185,18 @@ PINECONE_NAMESPACE=default               # Default namespace (optional)
 **OpenAI:**
 1. Sign up at [platform.openai.com](https://platform.openai.com/)
 2. Generate an API key in Settings → API Keys
+
+### 4. Verify Installation
+
+You can verify that the packages are installed and the system is working by running the unit tests:
+
+```bash
+# Check installed packages
+uv pip list | grep -E "pinecone|langchain"
+
+# Run unit tests
+uv run pytest tests/unit/test_rag_processor.py -v
+```
 
 ## Usage
 
@@ -259,6 +380,195 @@ curl -X POST "http://localhost:8000/llm/rag/directory" \
   }'
 ```
 
+#### List Namespaces
+
+Retrieve all available namespaces with document statistics:
+
+```bash
+curl -X GET "http://localhost:8000/llm/rag/namespaces"
+```
+
+Response:
+```json
+{
+  "namespaces": [
+    {
+      "namespace": "default",
+      "document_count": 15,
+      "vector_count": 234,
+      "last_updated": "2025-12-21T10:30:00"
+    },
+    {
+      "namespace": "project-a",
+      "document_count": 8,
+      "vector_count": 156,
+      "last_updated": "2025-12-20T15:45:00"
+    }
+  ]
+}
+```
+
+#### List Documents
+
+Retrieve documents with pagination and optional namespace filtering:
+
+```bash
+# List all documents (paginated)
+curl -X GET "http://localhost:8000/llm/rag/documents?limit=100&offset=0"
+
+# Filter by namespace
+curl -X GET "http://localhost:8000/llm/rag/documents?namespace=project-a&limit=50"
+```
+
+Response:
+```json
+{
+  "documents": [
+    {
+      "doc_id": "abc123...",
+      "filename": "sample_docs.txt",
+      "namespace": "default",
+      "total_chunks": 5,
+      "total_size": 4567,
+      "created_at": "2025-12-21T10:30:00"
+    }
+  ],
+  "total_count": 150,
+  "limit": 100,
+  "offset": 0,
+  "has_more": true
+}
+```
+
+**Query Parameters:**
+- `namespace` (optional): Filter by namespace (use "default" for default namespace)
+- `limit` (optional): Number of documents per page (1-1000, default: 100)
+- `offset` (optional): Starting position (default: 0)
+
+---
+
+## Namespace Strategy for Playground/Testing
+
+For small projects (3-10 documents), using **1 namespace per document** is perfectly valid and recommended:
+
+### Pattern: 1 Namespace = 1 Document
+
+```python
+# ✅ Recommended for playground (<10 documents)
+documents = [
+    ("data/docs/fastapi_intro.md", "doc-fastapi-intro"),
+    ("data/docs/python_guide.md", "doc-python-guide"),
+    ("data/docs/testing_best.md", "doc-testing-best"),
+]
+
+for file_path, namespace in documents:
+    rag_service.add_documents(
+        documents=[Path(file_path)],
+        namespace=namespace  # Unique namespace per document
+    )
+```
+
+**Advantages for small projects:**
+- ✅ Perfect granular selection (each document is a namespace)
+- ✅ Easy to manage in UI (each toggle = one document)
+- ✅ No complexity overhead for 3-4 documents
+- ✅ Clear and clean organization
+- ✅ Simple implementation in frontend
+
+**When to use this pattern:**
+- Learning/playground projects
+- Less than 10 documents
+- Testing and development
+- Rapid prototyping
+- Individual file-level control needed
+
+**When NOT to use this pattern:**
+- Production with hundreds of documents
+- Multiple projects sharing same index
+- Need to group documents by category
+- Scaling beyond 50+ documents
+
+### Complete Example for Playground
+
+```python
+# Playground initialization script
+from pathlib import Path
+from agentlab.core.rag_service import RAGServiceImpl
+from agentlab.core.llm_interface import LangChainLLM
+
+# Setup
+llm = LangChainLLM()
+rag_service = RAGServiceImpl(llm=llm)
+
+# Playground documents (1 namespace per document)
+playground_docs = {
+    "fastapi-intro": "data/docs/fastapi_intro.md",
+    "python-guide": "data/docs/python_guide.md",
+    "testing-tips": "data/docs/testing_best_practices.md",
+}
+
+# Load each document in its own namespace
+for namespace, filepath in playground_docs.items():
+    print(f"Loading {filepath} into namespace '{namespace}'...")
+    rag_service.add_documents(
+        documents=[Path(filepath)],
+        namespace=namespace
+    )
+
+print(f"✅ {len(playground_docs)} documents loaded in separate namespaces")
+```
+
+### API Usage for Playground
+
+```bash
+# Load individual document in its namespace
+curl -X POST "http://localhost:8000/llm/rag/documents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documents": ["data/docs/fastapi_intro.md"],
+    "namespace": "fastapi-intro"
+  }'
+
+# Chat with specific documents selected
+curl -X POST "http://localhost:8000/llm/chat" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Explain FastAPI"}],
+    "use_rag": true,
+    "rag_namespaces": ["fastapi-intro", "python-guide"],
+    "rag_top_k": 5
+  }'
+```
+
+**UI Implementation:**
+- Each document appears as a separate checkbox in the RAG sidebar
+- Selecting/deselecting a document = adding/removing its namespace
+- Multiple documents can be selected simultaneously
+- Chat endpoint receives array of selected namespaces
+
+### Comparison: Playground vs Production
+
+| Aspect | Playground (1 doc = 1 NS) | Production (Grouped NS) |
+|--------|---------------------------|-------------------------|
+| **Documents** | 3-10 | 100+ |
+| **Namespaces** | One per document | Category-based |
+| **UI Control** | Per-file checkboxes | Category toggles |
+| **Scalability** | Limited to ~50 docs | Unlimited |
+| **Management** | Very simple | Requires planning |
+| **Use Case** | Learning, testing | Production systems |
+
+**Example Production Strategy (for comparison):**
+```python
+# ❌ NOT for your playground (requires many documents)
+namespaces = {
+    "product-docs": ["intro.md", "api.md", "guide.md", ...],  # 50 docs
+    "legal": ["tos.md", "privacy.md", ...],                   # 20 docs
+    "support": ["faq.md", "troubleshooting.md", ...]          # 30 docs
+}
+```
+
+---
+
 ## Features
 
 ### Document Chunking
@@ -414,6 +724,13 @@ rag_service.add_documents([Path("document.pdf")])
 - **Batch operations**: Add multiple documents at once
 - **Namespace limits**: Use namespaces to limit search scope
 
+### 6. Document Management
+
+- **List before querying**: Use GET /rag/namespaces to see available namespaces
+- **Pagination**: When listing documents, use reasonable limit values (50-100)
+- **Namespace filtering**: Filter documents by namespace to reduce response size
+- **Monitor statistics**: Check document_count and vector_count to track growth
+
 ## Troubleshooting
 
 ### Issue: "Missing required environment variables"
@@ -472,6 +789,18 @@ pdftotext document.pdf document.txt
 
 # Convert HTML to markdown
 pandoc document.html -o document.md
+```
+
+### Issue: Dependency Conflicts or Import Errors
+
+If you encounter version conflicts or import errors:
+
+```bash
+# Update the lockfile
+uv lock --upgrade
+
+# Sync dependencies
+uv sync
 ```
 
 ## Examples
@@ -580,5 +909,7 @@ Key methods:
 - `POST /llm/rag/query` - Query RAG system
 - `POST /llm/rag/documents` - Add documents
 - `POST /llm/rag/directory` - Add directory of documents
+- `GET /llm/rag/namespaces` - List all namespaces with statistics
+- `GET /llm/rag/documents` - List documents with pagination
 
 See interactive docs at http://localhost:8000/docs when API is running.

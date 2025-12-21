@@ -44,6 +44,9 @@ def root():
                 "query": "/llm/rag/query",
                 "add_documents": "/llm/rag/documents",
                 "add_directory": "/llm/rag/directory",
+                "list_namespaces": "/llm/rag/namespaces",
+                "list_documents": "/llm/rag/documents",
+                "last_results": "/llm/rag/last-results",
             },
             "memory": {
                 "context": "/llm/memory/context",
@@ -52,6 +55,9 @@ def root():
                 "search": "/llm/memory/search",
                 "clear": "/llm/memory/session/{session_id}",
             },
+            "context": {
+                "window": "/llm/context-window",
+            },
             "config": {
                 "status": "/config/status",
                 "get_session": "/config/session/{session_id}",
@@ -59,6 +65,10 @@ def root():
                 "delete_session": "/config/session/{session_id}",
                 "update_memory": "/config/memory",
                 "update_rag": "/config/rag",
+            },
+            "session": {
+                "reset": "/session/reset",
+                "reset_all": "/session/reset-all",
             },
             "mpc": {
                 "create_instance": "/mpc/instances",
@@ -77,8 +87,18 @@ def health_check():
 
 
 # Mount routers
-from agentlab.api.routes import chat_routes, config_routes, mpc_routes
+from agentlab.api.routes import (
+    chat_router,
+    rag_router,
+    memory_router,
+    config_routes,
+    mpc_routes,
+    session_routes,
+)
 
-app.include_router(chat_routes.router, prefix="/llm", tags=["llm"])
+app.include_router(chat_router, prefix="/llm", tags=["llm"])
+app.include_router(rag_router, prefix="/llm/rag", tags=["rag"])
+app.include_router(memory_router, prefix="/llm/memory", tags=["memory"])
 app.include_router(config_routes.router, prefix="/config", tags=["config"])
 app.include_router(mpc_routes.router, prefix="/mpc", tags=["mpc"])
+app.include_router(session_routes.router, prefix="/session", tags=["session"])

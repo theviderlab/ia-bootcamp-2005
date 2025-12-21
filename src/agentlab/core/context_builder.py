@@ -12,6 +12,8 @@ Implements smart truncation strategies to stay within token limits.
 from dataclasses import dataclass
 from typing import Any
 
+import tiktoken
+
 from agentlab.models import MemoryContext, RAGResult
 
 
@@ -48,14 +50,16 @@ class ContextBuilder:
     Implements intelligent prioritization and truncation when needed.
     """
 
-    def __init__(self, max_tokens: int = 4000):
+    def __init__(self, max_tokens: int = 4000, model: str = "gpt-3.5-turbo"):
         """
         Initialize context builder.
         
         Args:
             max_tokens: Maximum tokens for combined context.
+            model: Model name for tiktoken encoding (default: gpt-3.5-turbo).
         """
         self.max_tokens = max_tokens
+        self.encoding = tiktoken.encoding_for_model(model)
 
     def build_context(
         self,
@@ -222,6 +226,20 @@ class ContextBuilder:
         
         return "\n\n".join(formatted)
 
+    def count_tokens(self, text: str) -> int:
+        """
+        Count tokens in text using tiktoken.
+        
+        Args:
+            text: Text to count tokens for.
+        
+        Returns:
+            Accurate token count.
+        """
+        if not text:
+            return 0
+        return len(self.encoding.encode(text))
+
     def _estimate_tokens(
         self,
         short_term: str,
@@ -232,9 +250,7 @@ class ContextBuilder:
         rag_text: str,
     ) -> int:
         """
-        Estimate total tokens in context (rough approximation).
-        
-        Uses 4 characters = 1 token as rough heuristic.
+        Estimate total tokens in context using tiktoken.
         
         Args:
             short_term: Short-term history text.
@@ -245,24 +261,24 @@ class ContextBuilder:
             rag_text: RAG context text.
         
         Returns:
-            Estimated token count.
+            Accurate token count using tiktoken.
         """
-        total_chars = 0
+        total_tokens = 0
         
-        total_chars += len(short_term)
-        total_chars += len(episodic)
-        total_chars += len(rag_text)
+        total_tokens += self.count_tokens(short_term)
+        total_tokens += self.count_tokens(episodic)
+        total_tokens += self.count_tokens(rag_text)
         
         if semantic:
-            total_chars += sum(len(fact) for fact in semantic)
+            total_tokens += sum(self.count_tokens(fact) for fact in semantic)
         
         if profile:
-            total_chars += sum(
-                len(str(k)) + len(str(v)) for k, v in profile.items()
+            profile_text = " ".join(
+                f"{k}: {v}" for k, v in profile.items()
             )
+            total_tokens += self.count_tokens(profile_text)
         
         if procedural:
-            total_chars += sum(len(pattern) for pattern in procedural)
+            total_tokens += sum(self.count_tokens(pattern) for pattern in procedural)
         
-        # Rough conversion: 4 chars = 1 token
-        return total_chars // 4
+        return total_tokens

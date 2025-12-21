@@ -3,9 +3,7 @@ Chat and LLM API routes.
 
 Endpoints for:
 - Generating text from LLM
-- Chat conversations with message history
-- RAG query and document management
-- Session management
+- Chat conversations with message history (with optional memory and RAG)
 """
 
 from datetime import datetime
@@ -57,7 +55,6 @@ def get_llm() -> LangChainLLM:
             )
     return _llm_instance
 
-
 def get_rag_service() -> RAGServiceImpl | None:
     """
     Get or create the RAG service instance.
@@ -90,7 +87,6 @@ def get_rag_service() -> RAGServiceImpl | None:
             print(f"⚠️  RAG service initialization failed: {e}")
             return None
     return _rag_instance
-
 
 def get_memory_service() -> IntegratedMemoryService | None:
     """
@@ -127,13 +123,11 @@ class GenerateRequest(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=1.0, description="Sampling temperature")
     max_tokens: int = Field(1000, gt=0, le=4000, description="Maximum tokens to generate")
 
-
 class GenerateResponse(BaseModel):
     """Response model for text generation."""
 
     text: str
     prompt: str
-
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
@@ -183,12 +177,33 @@ class ChatRequest(BaseModel):
         description="Context priority: 'memory', 'rag', or 'balanced'",
     )
 
+class RAGSource(BaseModel):
+    """RAG source document with score and metadata."""
+
+    content: str = Field(..., description="Document content")
+    score: float = Field(..., description="Similarity score (0-1)")
+    doc_id: str = Field(..., description="Document identifier")
+    namespace: str = Field(default="", description="Pinecone namespace")
+    chunk_index: int | None = Field(None, description="Chunk index in document")
 
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
 
     response: str
     session_id: str
+    context_text: str = Field(
+        default="",
+        description="Complete context sent to LLM (memory + RAG)"
+    )
+    context_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Accurate token count of context using tiktoken"
+    )
+    rag_sources: list[RAGSource] = Field(
+        default_factory=list,
+        description="RAG documents used with similarity scores"
+    )
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -220,7 +235,6 @@ async def generate_text(request: GenerateRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -336,6 +350,21 @@ async def chat(request: ChatRequest):
         # Format context for prompt
         context_text = context_builder.format_for_prompt(combined_context)
         
+        # Count context tokens using tiktoken
+        context_tokens = context_builder.count_tokens(context_text)
+        
+        # Extract RAG sources with scores
+        rag_sources_list: list[RAGSource] = []
+        if combined_context.rag_documents:
+            for doc in combined_context.rag_documents:
+                rag_sources_list.append(RAGSource(
+                    content=doc.get("page_content", ""),
+                    score=doc.get("score", 0.0),
+                    doc_id=doc.get("metadata", {}).get("doc_id", ""),
+                    namespace=doc.get("metadata", {}).get("namespace", ""),
+                    chunk_index=doc.get("metadata", {}).get("chunk_index"),
+                ))
+        
         # Add context to messages if available
         final_messages = chat_messages.copy()
         if context_text:
@@ -365,7 +394,10 @@ async def chat(request: ChatRequest):
         
         return ChatResponse(
             response=response_text,
-            session_id=session_id
+            session_id=session_id,
+            context_text=context_text,
+            context_tokens=context_tokens,
+            rag_sources=rag_sources_list
         )
     
     except HTTPException:
@@ -375,529 +407,4 @@ async def chat(request: ChatRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ============================================================================
-# RAG Endpoints
-# ============================================================================
-
-
-class RAGQueryRequest(BaseModel):
-    """Request model for RAG query endpoint."""
-
-    query: str = Field(..., min_length=1, description="Query to search knowledge base")
-    top_k: int = Field(5, ge=1, le=20, description="Number of documents to retrieve")
-    namespace: str | None = Field(None, description="Optional namespace to search")
-
-
-class RAGQueryResponse(BaseModel):
-    """Response model for RAG query."""
-
-    success: bool
-    response: str
-    sources: list[dict]
-    error_message: str | None = None
-
-
-class RAGAddDocumentsRequest(BaseModel):
-    """Request model for adding documents to RAG."""
-
-    documents: list[str] = Field(
-        ..., min_length=1, description="List of document texts or file paths"
-    )
-    namespace: str | None = Field(
-        None, description="Optional namespace for organization"
-    )
-    chunk_size: int = Field(
-        1000, ge=100, le=4000, description="Maximum characters per chunk"
-    )
-    chunk_overlap: int = Field(
-        200, ge=0, le=1000, description="Overlapping characters between chunks"
-    )
-
-
-class RAGAddDocumentsResponse(BaseModel):
-    """Response model for document addition."""
-
-    success: bool
-    message: str
-    documents_added: int
-
-
-class RAGAddDirectoryRequest(BaseModel):
-    """Request model for adding directory of documents."""
-
-    directory: str = Field(..., description="Path to directory containing documents")
-    namespace: str | None = Field(
-        None, description="Optional namespace for organization"
-    )
-    recursive: bool = Field(True, description="Search subdirectories recursively")
-    chunk_size: int = Field(
-        1000, ge=100, le=4000, description="Maximum characters per chunk"
-    )
-    chunk_overlap: int = Field(
-        200, ge=0, le=1000, description="Overlapping characters between chunks"
-    )
-
-
-@router.post("/rag/query", response_model=RAGQueryResponse)
-async def rag_query(request: RAGQueryRequest):
-    """
-    Query the RAG system with a question.
-
-    Retrieves relevant documents from the knowledge base and generates
-    an answer using the LLM with retrieved context.
-
-    Args:
-        request: RAG query request with question and parameters.
-
-    Returns:
-        Generated answer with source documents.
-
-    Raises:
-        HTTPException: If RAG service is not available or query fails.
-    """
-    try:
-        rag_service = get_rag_service()
-        if rag_service is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to initialize RAG service. "
-                "Please ensure Pinecone and OpenAI API keys are configured."
-            )
-        result = rag_service.query(
-            query=request.query, top_k=request.top_k, namespace=request.namespace
-        )
-
-        return RAGQueryResponse(
-            success=result.success,
-            response=result.response,
-            sources=result.sources,
-            error_message=result.error_message,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"RAG query failed: {str(e)}"
-        )
-
-
-@router.post("/rag/documents", response_model=RAGAddDocumentsResponse)
-async def add_documents(request: RAGAddDocumentsRequest):
-    """
-    Add documents to the RAG knowledge base.
-
-    Documents can be plain text strings or file paths. Supported file types
-    depend on registered loaders (currently: .txt, .md, .log).
-
-    Args:
-        request: Document addition request with texts or paths.
-
-    Returns:
-        Success status and number of documents added.
-
-    Raises:
-        HTTPException: If document addition fails.
-    """
-    try:
-        rag_service = get_rag_service()
-
-        # Add documents
-        rag_service.add_documents(
-            documents=request.documents,
-            namespace=request.namespace,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-        )
-
-        return RAGAddDocumentsResponse(
-            success=True,
-            message=f"Successfully added {len(request.documents)} documents",
-            documents_added=len(request.documents),
-        )
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to add documents: {str(e)}"
-        )
-
-
-@router.post("/rag/directory", response_model=RAGAddDocumentsResponse)
-async def add_directory(request: RAGAddDirectoryRequest):
-    """
-    Add all documents from a directory to the RAG knowledge base.
-
-    Recursively searches directory for supported file types and adds them
-    to the knowledge base with chunking and metadata.
-
-    Args:
-        request: Directory addition request with path and parameters.
-
-    Returns:
-        Success status and number of documents added.
-
-    Raises:
-        HTTPException: If directory doesn't exist or addition fails.
-    """
-    try:
-        rag_service = get_rag_service()
-
-        # Validate directory exists
-        dir_path = Path(request.directory)
-        if not dir_path.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Directory not found: {request.directory}"
-            )
-
-        if not dir_path.is_dir():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Path is not a directory: {request.directory}",
-            )
-
-        # Count files before processing
-        pattern = "**/*" if request.recursive else "*"
-        files = [
-            f
-            for f in dir_path.glob(pattern)
-            if f.is_file() and rag_service.loader_registry.supports(f)
-        ]
-
-        if not files:
-            return RAGAddDocumentsResponse(
-                success=True,
-                message=f"No supported files found in {request.directory}",
-                documents_added=0,
-            )
-
-        # Add documents from directory
-        rag_service.add_documents_from_directory(
-            directory=request.directory,
-            namespace=request.namespace,
-            recursive=request.recursive,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-        )
-
-        return RAGAddDocumentsResponse(
-            success=True,
-            message=f"Successfully added {len(files)} documents from directory",
-            documents_added=len(files),
-        )
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to add directory: {str(e)}"
-        )
-
-
-class RAGDeleteNamespaceResponse(BaseModel):
-    """Response model for namespace deletion."""
-
-    success: bool
-    namespace: str
-    message: str
-
-
-@router.delete("/rag/namespace/{namespace}", response_model=RAGDeleteNamespaceResponse)
-async def delete_namespace(namespace: str):
-    """
-    Delete all documents in a specific namespace.
-
-    This endpoint removes all vectors and documents associated with a namespace
-    in the Pinecone index. Useful for cleanup and testing.
-
-    Args:
-        namespace: The namespace to delete.
-
-    Returns:
-        Success status and deletion details.
-
-    Raises:
-        HTTPException: If namespace deletion fails or RAG service unavailable.
-    """
-    try:
-        rag_service = get_rag_service()
-        if rag_service is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to initialize RAG service. "
-                "Please ensure Pinecone and OpenAI API keys are configured.",
-            )
-
-        if not namespace or namespace.strip() == "":
-            raise HTTPException(
-                status_code=400, detail="Namespace cannot be empty"
-            )
-
-        # Delete the namespace
-        result = rag_service.delete_namespace(namespace)
-
-        return RAGDeleteNamespaceResponse(
-            success=result["success"],
-            namespace=result["namespace"],
-            message=result["message"],
-        )
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete namespace '{namespace}': {str(e)}",
-        )
-
-
-# ============================================================================
-# Memory Management Endpoints
-# ============================================================================
-
-
-class MemoryContextRequest(BaseModel):
-    """Request model for memory context retrieval."""
-
-    session_id: str = Field(..., min_length=1, description="Session identifier")
-    max_tokens: int = Field(
-        2000, gt=0, le=8000, description="Maximum tokens in context"
-    )
-
-
-class MemoryContextResponse(BaseModel):
-    """Response model for memory context."""
-
-    session_id: str
-    short_term_context: str
-    semantic_facts: list[str]
-    user_profile: dict
-    episodic_summary: str | None
-    procedural_patterns: list[str] | None
-    total_messages: int
-
-
-class MemoryHistoryResponse(BaseModel):
-    """Response model for conversation history."""
-
-    session_id: str
-    messages: list[dict]
-    total_count: int
-
-
-class MemoryStatsResponse(BaseModel):
-    """Response model for memory statistics."""
-
-    session_id: str
-    message_count: int
-    token_count: int
-    semantic_facts_count: int
-    profile_attributes_count: int
-    oldest_message: str | None
-    newest_message: str | None
-
-
-class MemorySearchRequest(BaseModel):
-    """Request model for semantic memory search."""
-
-    query: str = Field(..., min_length=1, description="Search query")
-    session_id: str | None = Field(None, description="Optional session filter")
-    top_k: int = Field(5, gt=0, le=20, description="Number of results")
-
-
-class MemorySearchResponse(BaseModel):
-    """Response model for semantic search."""
-
-    query: str
-    results: list[dict]
-    total_results: int
-
-
-@router.post("/memory/context", response_model=MemoryContextResponse)
-async def get_memory_context(request: MemoryContextRequest):
-    """
-    Get enriched memory context for a session.
-
-    Retrieves short-term conversation buffer plus long-term memory
-    including semantic facts, user profile, episodic summary, and
-    procedural patterns.
-
-    Args:
-        request: Context request with session ID and token limit.
-
-    Returns:
-        Complete memory context.
-
-    Raises:
-        HTTPException: If retrieval fails.
-    """
-    try:
-        memory_service = get_memory_service()
-        context = memory_service.get_context(
-            session_id=request.session_id, max_tokens=request.max_tokens
-        )
-
-        return MemoryContextResponse(
-            session_id=context.session_id,
-            short_term_context=context.short_term_context,
-            semantic_facts=context.semantic_facts,
-            user_profile=context.user_profile,
-            episodic_summary=context.episodic_summary,
-            procedural_patterns=context.procedural_patterns,
-            total_messages=context.total_messages,
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get context: {str(e)}"
-        )
-
-
-@router.get("/memory/history/{session_id}", response_model=MemoryHistoryResponse)
-async def get_conversation_history(session_id: str, limit: int = 50):
-    """
-    Get conversation history for a session.
-
-    Args:
-        session_id: Session identifier.
-        limit: Maximum number of messages (default: 50).
-
-    Returns:
-        Conversation history with messages.
-
-    Raises:
-        HTTPException: If retrieval fails.
-    """
-    try:
-        memory_service = get_memory_service()
-        messages = memory_service.get_messages(session_id, limit=limit)
-
-        # Convert to dict format
-        message_dicts = [
-            {
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-                "metadata": msg.metadata,
-            }
-            for msg in messages
-        ]
-
-        return MemoryHistoryResponse(
-            session_id=session_id,
-            messages=message_dicts,
-            total_count=len(message_dicts),
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get history: {str(e)}"
-        )
-
-
-@router.delete("/memory/{session_id}")
-async def clear_conversation_memory(session_id: str):
-    """
-    Clear all memory for a session.
-
-    Args:
-        session_id: Session identifier to clear.
-
-    Returns:
-        Success message.
-
-    Raises:
-        HTTPException: If clearing fails.
-    """
-    try:
-        memory_service = get_memory_service()
-        memory_service.clear_session(session_id)
-
-        return {"success": True, "message": f"Cleared memory for session {session_id}"}
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to clear memory: {str(e)}"
-        )
-
-
-@router.get("/memory/stats/{session_id}", response_model=MemoryStatsResponse)
-async def get_memory_statistics(session_id: str):
-    """
-    Get memory statistics for a session.
-
-    Args:
-        session_id: Session identifier.
-
-    Returns:
-        Memory usage statistics.
-
-    Raises:
-        HTTPException: If retrieval fails.
-    """
-    try:
-        memory_service = get_memory_service()
-        stats = memory_service.get_stats(session_id)
-
-        return MemoryStatsResponse(
-            session_id=stats.session_id,
-            message_count=stats.message_count,
-            token_count=stats.token_count,
-            semantic_facts_count=stats.semantic_facts_count,
-            profile_attributes_count=stats.profile_attributes_count,
-            oldest_message=stats.oldest_message_date.isoformat()
-            if stats.oldest_message_date
-            else None,
-            newest_message=stats.newest_message_date.isoformat()
-            if stats.newest_message_date
-            else None,
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get stats: {str(e)}"
-        )
-
-
-@router.post("/memory/search", response_model=MemorySearchResponse)
-async def search_semantic_memory(request: MemorySearchRequest):
-    """
-    Search semantic memory for relevant facts.
-
-    Uses vector similarity to find relevant information from
-    conversation history.
-
-    Args:
-        request: Search request with query and filters.
-
-    Returns:
-        Matching results with scores.
-
-    Raises:
-        HTTPException: If search fails.
-    """
-    try:
-        memory_service = get_memory_service()
-        results = memory_service.search_semantic(
-            query=request.query,
-            session_id=request.session_id,
-            top_k=request.top_k,
-        )
-
-        return MemorySearchResponse(
-            query=request.query, results=results, total_results=len(results)
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to search memory: {str(e)}"
-        )
 

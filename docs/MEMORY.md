@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Agent Lab memory module provides a comprehensive conversation memory system with both **short-term** and **long-term** memory capabilities. Built on LangChain with hybrid storage (MySQL + Pinecone), it supports multiple memory types:
+The Agent Lab memory module provides a comprehensive conversation memory system with both **short-term** and **long-term** memory capabilities. Built on **LangGraph** and **LangChain** with hybrid storage (MySQL + Pinecone), it supports multiple memory types:
 
-- **Short-term Memory**: Recent conversation buffer using LangChain memory classes
+- **Short-term Memory**: Recent conversation buffer using LangGraph state management
 - **Semantic Memory**: Facts and knowledge extracted from conversations (hybrid storage)
 - **Episodic Memory**: Temporal summaries of conversation episodes
 - **Profile Memory**: Aggregated user characteristics and preferences
@@ -25,15 +25,76 @@ The Agent Lab memory module provides a comprehensive conversation memory system 
 │  │  - Window Memory           │  │  - Profile Building           │ │
 │  │  - Summary Memory          │  │  - Episodic Summarization     │ │
 │  │                            │  │  - Pattern Recognition        │ │
-│  │  Backend: MySQL            │  │  Backend: MySQL + Pinecone    │ │
+│  │  Backend: MySQL + SQLite   │  │  Backend: MySQL + Pinecone    │ │
 │  └────────────────────────────┘  └───────────────────────────────┘ │
 │                                                                      │
 │  Storage Layer:                                                      │
 │  - MySQL (chat_history table) - Structured conversation data        │
+│  - SQLite (checkpoints) - Session state persistence                 │
 │  - Pinecone (optional) - Semantic embeddings for fast similarity    │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Key Components
+
+1. **IntegratedMemoryService**: Unified interface combining short-term and long-term memory.
+2. **ShortTermMemoryService**: Manages conversation state using LangGraph.
+   - **Buffer**: Full history in memory.
+   - **Window**: Sliding window of messages.
+   - **Summary**: LLM-generated summaries of older context.
+   - **Storage**: MySQL for source of truth, SQLite for state checkpoints.
+3. **LongTermMemoryProcessor**: Background processor for extracting insights.
+   - **Semantic**: Fact extraction and vector storage.
+   - **Profile**: User attribute aggregation.
+   - **Episodic**: Chronological summarization.
+   - **Procedural**: Pattern detection.
+   - **Storage**: MySQL for structured data, Pinecone for embeddings.
+
+## Key Design Decisions
+
+1. **Hybrid Storage**: Configurable support for MySQL, Pinecone, or both.
+   - **Rationale**: Flexibility for different deployment scales.
+   - **Implementation**: `SEMANTIC_STORAGE` config (mysql/pinecone/hybrid).
+
+2. **Protocol-Based Architecture**: Defined `MemoryService` protocols.
+   - **Rationale**: Dependency Inversion Principle (SOLID) for testability.
+   - **Implementation**: Duck-typed protocols in `models.py`.
+
+3. **Integrated Service Pattern**: Composition over inheritance.
+   - **Rationale**: Unified API while keeping components decoupled.
+   - **Implementation**: `IntegratedMemoryService` wraps specific services.
+
+4. **LangGraph Integration**: State machine for conversation flow.
+   - **Rationale**: Robust state management and checkpointing.
+   - **Implementation**: `StateGraph` with `MemorySaver`/`SqliteSaver`.
+
+## File Structure
+
+```
+src/agentlab/
+├── models.py                     # Data models and protocols
+├── config/
+│   └── memory_config.py         # Memory configuration
+├── core/
+│   └── memory_service.py        # Short-term & Integrated services
+├── agents/
+│   └── memory_processor.py      # Long-term memory processor
+├── database/
+│   └── crud.py                  # Database operations
+└── api/
+    └── routes/
+        └── chat_routes.py       # API endpoints
+```
+
+## Dependencies
+
+- **mysql-connector-python**: Database connectivity.
+- **langgraph**: State management and checkpointing.
+- **langchain**: LLM integration and utilities.
+- **langchain-openai**: OpenAI model integration.
+- **langchain-pinecone**: Vector database integration.
+- **pinecone-client**: Vector storage client.
 
 ## Configuration
 
@@ -274,13 +335,13 @@ print(rag_result.response)
 
 ### 1. Short-Term Memory
 
-Managed by `ShortTermMemoryService`, uses LangChain memory classes:
+Managed by `ShortTermMemoryService`, uses **LangGraph** for state management:
 
-- **Buffer**: Full conversation history
-- **Window**: Sliding window of last K messages
-- **Summary**: Progressive summarization
+- **Buffer**: Full conversation history (uses `MemorySaver`).
+- **Window**: Sliding window of last K messages (uses `SqliteSaver`).
+- **Summary**: Progressive summarization (uses `SqliteSaver`).
 
-Backend: MySQL `chat_history` table
+Backend: MySQL `chat_history` table (persistence) + SQLite (checkpoints).
 
 ### 2. Semantic Memory
 

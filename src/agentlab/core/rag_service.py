@@ -20,6 +20,7 @@ from agentlab.agents.rag_processor import (
     preprocess_text,
 )
 from agentlab.config.rag_config import RAGConfig
+from agentlab.database.crud import bulk_insert_knowledge_documents
 from agentlab.loaders import DocumentLoaderRegistry, TextFileLoader
 from agentlab.models import LLMInterface, RAGResult
 
@@ -208,15 +209,18 @@ class RAGServiceImpl:
         try:
             all_chunks: list[Document] = []
             use_namespace = namespace or self.config.namespace
+            document_metadata: dict[str, dict[str, Any]] = {}  # Track metadata per doc_id
 
             for doc in documents:
                 # Check if it's a file path or text content
+                file_size = None
                 if isinstance(doc, (str, Path)):
                     path = Path(doc)
                     if path.exists():
                         # It's a file path - load content
                         content = self.loader_registry.load(path)
                         source = path.name
+                        file_size = path.stat().st_size
                     else:
                         # It's text content
                         content = str(doc)
@@ -232,6 +236,21 @@ class RAGServiceImpl:
                     overlap=chunk_overlap,
                     source=source,
                 )
+
+                # Track metadata for MySQL insert (aggregate per source file)
+                if chunks and source:
+                    doc_id = generate_document_id(chunks[0].page_content, source)
+                    if doc_id not in document_metadata:
+                        document_metadata[doc_id] = {
+                            "doc_id": doc_id,
+                            "content": chunks[0].page_content[:500],  # Store first 500 chars as sample
+                            "filename": source,
+                            "namespace": use_namespace,
+                            "chunk_count": 0,
+                            "file_size": file_size,
+                            "metadata": {"source": source, "chunk_size": chunk_size, "chunk_overlap": chunk_overlap},
+                        }
+                    document_metadata[doc_id]["chunk_count"] += len(chunks)
 
                 all_chunks.extend(chunks)
 
@@ -251,6 +270,21 @@ class RAGServiceImpl:
                 )
             else:
                 self.vectorstore.add_documents(documents=all_chunks, ids=ids)
+
+            # Add to MySQL knowledge_base table (fail entire operation if this fails)
+            if document_metadata:
+                try:
+                    mysql_documents = list(document_metadata.values())
+                    rows_affected = bulk_insert_knowledge_documents(mysql_documents)
+                    print(
+                        f"Stored {rows_affected} document(s) metadata in MySQL knowledge_base table"
+                    )
+                except Exception as mysql_error:
+                    # Critical: fail the entire operation if MySQL write fails
+                    raise RuntimeError(
+                        f"Failed to store document metadata in MySQL: {mysql_error}. "
+                        f"Pinecone vectors added but metadata not persisted."
+                    ) from mysql_error
 
             print(
                 f"Added {len(all_chunks)} document chunks to namespace '{use_namespace or 'default'}'"
@@ -321,7 +355,7 @@ class RAGServiceImpl:
             namespace: Optional namespace to search in.
 
         Returns:
-            List of tuples containing (document, similarity_score).
+            List of tuples containing (document, similarity_score) sorted by score descending.
         """
         try:
             if namespace:
@@ -330,6 +364,11 @@ class RAGServiceImpl:
                 )
             else:
                 docs_with_scores = self.vectorstore.similarity_search_with_score(query, k=top_k)
+            
+            # Sort by score in descending order (higher score = more similar)
+            # Pinecone may return results in unpredictable order depending on the metric
+            docs_with_scores.sort(key=lambda x: x[1], reverse=True)
+            
             return docs_with_scores
         except Exception as e:
             print(f"Warning: Similarity search failed: {e}")
@@ -442,3 +481,190 @@ class RAGServiceImpl:
 
         except Exception as e:
             raise RuntimeError(f"Failed to delete namespace '{namespace}': {e}") from e
+
+    def get_namespace_stats(self, namespace: str) -> dict[str, Any]:
+        """
+        Get statistics for a specific namespace.
+
+        Args:
+            namespace: The namespace to get stats for.
+
+        Returns:
+            Dictionary with namespace statistics including vector count and dimension.
+
+        Raises:
+            RuntimeError: If stats retrieval fails.
+        """
+        try:
+            if not namespace:
+                raise ValueError("Namespace cannot be empty")
+
+            # Get the Pinecone index
+            index = self.pc.Index(self.config.index_name)
+
+            # Get index statistics
+            stats = index.describe_index_stats()
+
+            # Extract namespace-specific stats
+            namespace_stats = stats.get("namespaces", {}).get(namespace, {})
+            
+            if not namespace_stats:
+                # Namespace exists but is empty or doesn't exist yet
+                return {
+                    "success": True,
+                    "namespace": namespace,
+                    "vector_count": 0,
+                    "dimension": self.config.dimension,
+                    "exists": False,
+                }
+
+            return {
+                "success": True,
+                "namespace": namespace,
+                "vector_count": namespace_stats.get("vector_count", 0),
+                "dimension": stats.get("dimension", self.config.dimension),
+                "exists": True,
+            }
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to get stats for namespace '{namespace}': {e}") from e
+
+    def list_namespaces(self) -> list[dict[str, Any]]:
+        """
+        List all available namespaces with document counts and metadata.
+
+        Combines data from Pinecone index statistics and MySQL database
+        to provide comprehensive namespace information.
+
+        Returns:
+            List of dictionaries with namespace information:
+            - name: Namespace name ("default" for empty namespace)
+            - document_count: Number of unique documents
+            - total_chunks: Total number of vector chunks
+            - last_updated: ISO timestamp of most recent update
+
+        Raises:
+            RuntimeError: If listing fails.
+        """
+        try:
+            # Get Pinecone namespace stats
+            index = self.pc.Index(self.config.index_name)
+            stats = index.describe_index_stats()
+            pinecone_namespaces = stats.get("namespaces", {})
+
+            # Get database document counts
+            from agentlab.database.crud import get_namespace_document_counts
+
+            db_namespaces = get_namespace_document_counts()
+            db_lookup = {ns["namespace"]: ns for ns in db_namespaces}
+
+            # Merge Pinecone and database data
+            namespaces = []
+            seen_namespaces = set()
+
+            # Process Pinecone namespaces
+            for ns_name, ns_data in pinecone_namespaces.items():
+                # Map empty string to "default" for display
+                display_name = "default" if ns_name == "" else ns_name
+                seen_namespaces.add(ns_name)
+
+                db_data = db_lookup.get(ns_name, {})
+                
+                namespaces.append({
+                    "name": display_name,
+                    "document_count": db_data.get("document_count", 0),
+                    "total_chunks": ns_data.get("vector_count", 0),
+                    "last_updated": db_data.get("last_updated").isoformat() 
+                        if db_data.get("last_updated") else datetime.now().isoformat(),
+                })
+
+            # Add any database-only namespaces (shouldn't happen in normal operation)
+            for ns_data in db_namespaces:
+                ns_name = ns_data["namespace"]
+                if ns_name not in seen_namespaces:
+                    display_name = "default" if ns_name == "" else ns_name
+                    namespaces.append({
+                        "name": display_name,
+                        "document_count": ns_data.get("document_count", 0),
+                        "total_chunks": ns_data.get("total_chunks", 0),
+                        "last_updated": ns_data.get("last_updated").isoformat()
+                            if ns_data.get("last_updated") else datetime.now().isoformat(),
+                    })
+
+            # Sort by last_updated descending
+            namespaces.sort(key=lambda x: x["last_updated"], reverse=True)
+
+            return namespaces
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to list namespaces: {e}") from e
+
+    def list_documents(
+        self, 
+        namespace: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """
+        List documents in the knowledge base with optional namespace filter.
+
+        Args:
+            namespace: Optional namespace to filter by. Use "default" for empty namespace.
+            limit: Maximum number of documents to return (1-1000).
+            offset: Number of documents to skip for pagination.
+
+        Returns:
+            Dictionary containing:
+            - documents: List of document metadata
+            - total_count: Total documents matching filter
+            - limit: Applied limit
+            - offset: Applied offset
+            - has_more: Boolean indicating if more documents exist
+
+        Raises:
+            RuntimeError: If listing fails.
+            ValueError: If limit is out of range.
+        """
+        try:
+            from agentlab.database.crud import query_knowledge_base_documents
+
+            # Map "default" display name back to empty string for query
+            query_namespace = "" if namespace == "default" else namespace
+
+            result = query_knowledge_base_documents(
+                namespace=query_namespace,
+                limit=limit,
+                offset=offset,
+            )
+
+            # Process documents to format timestamps and map empty namespace to "default"
+            documents = []
+            for doc in result["documents"]:
+                # Map empty namespace to "default" for display
+                ns = doc.get("namespace", "")
+                display_namespace = "default" if ns == "" else ns
+
+                documents.append({
+                    "id": doc["id"],
+                    "filename": doc["filename"],
+                    "namespace": display_namespace,
+                    "chunk_count": doc.get("chunk_count", 0),
+                    "file_size": doc.get("file_size", 0),
+                    "uploaded_at": doc["uploaded_at"].isoformat() 
+                        if doc.get("uploaded_at") else datetime.now().isoformat(),
+                })
+
+            has_more = (offset + limit) < result["total_count"]
+
+            return {
+                "documents": documents,
+                "total_count": result["total_count"],
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+            }
+
+        except ValueError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Failed to list documents: {e}") from e

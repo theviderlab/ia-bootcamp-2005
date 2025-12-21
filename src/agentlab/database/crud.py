@@ -55,7 +55,6 @@ def get_db_connection(
         if connection and connection.is_connected():
             connection.close()
 
-
 def initialize_database(config: DatabaseConfig | None = None) -> None:
     """
     Initialize database by creating all tables defined in models.py.
@@ -77,7 +76,6 @@ def initialize_database(config: DatabaseConfig | None = None) -> None:
             raise RuntimeError(f"Failed to initialize database: {e}") from e
         finally:
             cursor.close()
-
 
 def create_chat_message(
     session_id: str,
@@ -126,7 +124,6 @@ def create_chat_message(
         finally:
             cursor.close()
 
-
 def get_chat_history(
     session_id: str,
     limit: int = 50,
@@ -171,7 +168,6 @@ def get_chat_history(
         finally:
             cursor.close()
 
-
 def delete_chat_history(
     session_id: str, config: DatabaseConfig | None = None
 ) -> int:
@@ -202,6 +198,34 @@ def delete_chat_history(
         finally:
             cursor.close()
 
+def delete_all_chat_history(
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Delete all chat history from all sessions.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Number of deleted rows.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = "DELETE FROM chat_history"
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query)
+            conn.commit()
+            return cursor.rowcount
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to delete all history: {e}") from e
+        finally:
+            cursor.close()
 
 def get_chat_stats(
     session_id: str, config: DatabaseConfig | None = None
@@ -252,26 +276,148 @@ def get_chat_stats(
 def create_knowledge_document(
     doc_id: str,
     content: str,
+    filename: str | None = None,
+    namespace: str | None = None,
+    chunk_count: int = 1,
+    file_size: int | None = None,
     embedding: list[float] | None = None,
     metadata: dict[str, Any] | None = None,
+    config: DatabaseConfig | None = None,
 ) -> int:
     """
-    Create a new document in the knowledge base.
+    Create or update a document in the knowledge base.
+
+    Uses INSERT ... ON DUPLICATE KEY UPDATE to handle upserts.
+    If doc_id exists, updates chunk_count, file_size, and updated_at.
 
     Args:
         doc_id: Unique document identifier.
-        content: Document text content.
-        embedding: Optional vector embedding.
-        metadata: Optional metadata dictionary.
+        content: Document text content (sample or summary).
+        filename: Original filename.
+        namespace: Optional namespace for organization.
+        chunk_count: Number of chunks for this document.
+        file_size: File size in bytes.
+        embedding: Optional vector embedding (JSON).
+        metadata: Optional metadata dictionary (JSON).
+        config: Database configuration.
 
     Returns:
-        ID of the created document row.
+        ID of the created/updated document row.
 
     Raises:
-        ValueError: If doc_id already exists.
+        RuntimeError: If database operation fails.
     """
-    # Implementation will be added in future iterations
-    raise NotImplementedError("CRUD operations to be implemented")
+    query = """
+        INSERT INTO knowledge_base 
+        (doc_id, content, filename, namespace, chunk_count, file_size, embedding, metadata)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            chunk_count = VALUES(chunk_count),
+            file_size = VALUES(file_size),
+            updated_at = CURRENT_TIMESTAMP
+    """
+
+    embedding_json = json.dumps(embedding) if embedding else None
+    metadata_json = json.dumps(metadata) if metadata else None
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                query,
+                (
+                    doc_id,
+                    content,
+                    filename,
+                    namespace,
+                    chunk_count,
+                    file_size,
+                    embedding_json,
+                    metadata_json,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid if cursor.lastrowid else cursor.rowcount
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to create knowledge document: {e}") from e
+        finally:
+            cursor.close()
+
+def bulk_insert_knowledge_documents(
+    documents: list[dict[str, Any]],
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Bulk insert or update multiple documents in the knowledge base.
+
+    Uses INSERT ... ON DUPLICATE KEY UPDATE for efficient batch upserts.
+    Rolls back entire transaction if any insert fails.
+
+    Args:
+        documents: List of document dictionaries with keys:
+            - doc_id (required): Unique document identifier
+            - content (required): Document text content
+            - filename (optional): Original filename
+            - namespace (optional): Namespace for organization
+            - chunk_count (optional): Number of chunks (default: 1)
+            - file_size (optional): File size in bytes
+            - embedding (optional): Vector embedding list
+            - metadata (optional): Metadata dictionary
+        config: Database configuration.
+
+    Returns:
+        Number of documents inserted/updated.
+
+    Raises:
+        ValueError: If documents list is empty or missing required fields.
+        RuntimeError: If database operation fails.
+    """
+    if not documents:
+        raise ValueError("Documents list cannot be empty")
+
+    query = """
+        INSERT INTO knowledge_base 
+        (doc_id, content, filename, namespace, chunk_count, file_size, embedding, metadata)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            chunk_count = VALUES(chunk_count),
+            file_size = VALUES(file_size),
+            updated_at = CURRENT_TIMESTAMP
+    """
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            values = []
+            for doc in documents:
+                if "doc_id" not in doc or "content" not in doc:
+                    raise ValueError("Each document must have 'doc_id' and 'content' fields")
+
+                embedding_json = json.dumps(doc.get("embedding")) if doc.get("embedding") else None
+                metadata_json = json.dumps(doc.get("metadata")) if doc.get("metadata") else None
+
+                values.append(
+                    (
+                        doc["doc_id"],
+                        doc["content"],
+                        doc.get("filename"),
+                        doc.get("namespace"),
+                        doc.get("chunk_count", 1),
+                        doc.get("file_size"),
+                        embedding_json,
+                        metadata_json,
+                    )
+                )
+
+            cursor.executemany(query, values)
+            conn.commit()
+            return cursor.rowcount
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to bulk insert knowledge documents: {e}") from e
+        finally:
+            cursor.close()
 
 
 def get_knowledge_documents(top_k: int = 10) -> list[dict[str, Any]]:
@@ -308,7 +454,6 @@ def create_mpc_instance(
     """
     raise NotImplementedError("CRUD operations to be implemented")
 
-
 def update_mpc_instance_status(instance_id: str, status: str) -> None:
     """
     Update the status of an MPC instance.
@@ -318,7 +463,6 @@ def update_mpc_instance_status(instance_id: str, status: str) -> None:
         status: New status value.
     """
     raise NotImplementedError("CRUD operations to be implemented")
-
 
 def get_mpc_instances() -> list[dict[str, Any]]:
     """
@@ -386,7 +530,6 @@ def create_or_update_session_config(
         finally:
             cursor.close()
 
-
 def get_session_config(
     session_id: str, config: DatabaseConfig | None = None
 ) -> dict[str, Any] | None:
@@ -429,7 +572,6 @@ def get_session_config(
         finally:
             cursor.close()
 
-
 def delete_session_config(
     session_id: str, config: DatabaseConfig | None = None
 ) -> bool:
@@ -458,5 +600,262 @@ def delete_session_config(
             raise RuntimeError(
                 f"Failed to delete session config: {e}"
             ) from e
+        finally:
+            cursor.close()
+
+
+# ============================================================================
+# System Reset Operations
+# ============================================================================
+
+
+def count_unique_sessions(
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Count unique session IDs in chat history.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Number of unique sessions.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = "SELECT COUNT(DISTINCT session_id) as count FROM chat_history"
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(query)
+            result = cursor.fetchone()
+            return result["count"] if result else 0
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to count sessions: {e}") from e
+        finally:
+            cursor.close()
+
+def delete_all_session_configs(
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Delete all session configurations.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Number of deleted rows.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = "DELETE FROM session_configs"
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query)
+            conn.commit()
+            return cursor.rowcount
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to delete session configs: {e}") from e
+        finally:
+            cursor.close()
+
+def delete_all_knowledge_base(
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Delete all documents from knowledge base.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Number of deleted rows.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = "DELETE FROM knowledge_base"
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query)
+            conn.commit()
+            return cursor.rowcount
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to delete knowledge base: {e}") from e
+        finally:
+            cursor.close()
+
+def get_namespace_document_counts(
+    config: DatabaseConfig | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Get document counts and metadata grouped by namespace.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        List of dictionaries with namespace statistics:
+        - namespace: Namespace name (empty string for default)
+        - document_count: Number of unique documents
+        - total_chunks: Total number of chunks across all documents
+        - last_updated: Most recent update timestamp
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = """
+        SELECT 
+            COALESCE(namespace, '') as namespace,
+            COUNT(DISTINCT filename) as document_count,
+            SUM(chunk_count) as total_chunks,
+            MAX(updated_at) as last_updated
+        FROM knowledge_base
+        GROUP BY namespace
+        ORDER BY last_updated DESC
+    """
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(query)
+            results = cursor.fetchall()
+            return results if results else []
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to get namespace counts: {e}") from e
+        finally:
+            cursor.close()
+
+def query_knowledge_base_documents(
+    namespace: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Query documents from knowledge base with optional namespace filter and pagination.
+
+    Args:
+        namespace: Optional namespace to filter by (None = all namespaces).
+        limit: Maximum number of documents to return (1-1000).
+        offset: Number of documents to skip for pagination.
+        config: Database configuration.
+
+    Returns:
+        Dictionary containing:
+        - documents: List of document metadata dictionaries
+        - total_count: Total number of documents matching filter
+        - limit: Applied limit
+        - offset: Applied offset
+
+    Raises:
+        RuntimeError: If database operation fails.
+        ValueError: If limit is out of range.
+    """
+    if not 1 <= limit <= 1000:
+        raise ValueError("Limit must be between 1 and 1000")
+
+    # Build query with optional namespace filter
+    where_clause = "WHERE namespace = %s" if namespace is not None else ""
+    
+    # Query for documents with aggregated chunk counts
+    query = f"""
+        SELECT 
+            doc_id as id,
+            filename,
+            COALESCE(namespace, '') as namespace,
+            SUM(chunk_count) as chunk_count,
+            MAX(file_size) as file_size,
+            MIN(created_at) as uploaded_at
+        FROM knowledge_base
+        {where_clause}
+        GROUP BY doc_id, filename, namespace
+        ORDER BY uploaded_at DESC
+        LIMIT %s OFFSET %s
+    """
+    
+    # Count query for total
+    count_query = f"""
+        SELECT COUNT(DISTINCT doc_id) as total
+        FROM knowledge_base
+        {where_clause}
+    """
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Get total count
+            if namespace is not None:
+                cursor.execute(count_query, (namespace,))
+            else:
+                cursor.execute(count_query)
+            count_result = cursor.fetchone()
+            total_count = count_result["total"] if count_result else 0
+
+            # Get documents
+            if namespace is not None:
+                cursor.execute(query, (namespace, limit, offset))
+            else:
+                cursor.execute(query, (limit, offset))
+            documents = cursor.fetchall()
+
+            return {
+                "documents": documents if documents else [],
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset,
+            }
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to query knowledge base documents: {e}") from e
+        finally:
+            cursor.close()
+
+def get_table_counts(
+    config: DatabaseConfig | None = None,
+) -> dict[str, int]:
+    """
+    Get row counts for all major tables.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Dictionary with table names as keys and row counts as values.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    tables = {
+        "chat_history": "SELECT COUNT(*) as count FROM chat_history",
+        "session_configs": "SELECT COUNT(*) as count FROM session_configs",
+        "knowledge_base": "SELECT COUNT(*) as count FROM knowledge_base",
+        "mpc_instances": "SELECT COUNT(*) as count FROM mpc_instances",
+    }
+
+    counts = {}
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            for table_name, query in tables.items():
+                try:
+                    cursor.execute(query)
+                    result = cursor.fetchone()
+                    counts[table_name] = result["count"] if result else 0
+                except MySQLError:
+                    # If table doesn't exist or query fails, set to 0
+                    counts[table_name] = 0
+            return counts
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to get table counts: {e}") from e
         finally:
             cursor.close()

@@ -20,9 +20,14 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     content TEXT NOT NULL,
     embedding JSON,
     metadata JSON,
+    filename VARCHAR(512),
+    namespace VARCHAR(255),
+    chunk_count INT DEFAULT 1,
+    file_size INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_doc_id (doc_id),
+    INDEX idx_namespace (namespace),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
@@ -86,6 +91,10 @@ class KnowledgeBaseRow:
     content: str
     embedding: list[float] | None
     metadata: dict
+    filename: str | None
+    namespace: str | None
+    chunk_count: int
+    file_size: int | None
     created_at: datetime
     updated_at: datetime
 
