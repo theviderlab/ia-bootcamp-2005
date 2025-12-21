@@ -80,7 +80,7 @@ agentlab/
 - **Modern Python**: Python 3.12+ with type hints and Protocols
 - **FastAPI Backend**: Production-ready REST API with automatic documentation
 - **LangChain Integration**: Unified interface for multiple LLM providers
-- **MCP Support**: Anthropic's Model Context Protocol implementation
+- **MCP Tools**: Extensible tool system with autonomous agent execution
 - **RAG System**: Vector embeddings with Pinecone storage
 - **Memory System**: Multi-level conversation memory (short-term, semantic, episodic, profile, procedural)
 - **Testing Ready**: Pre-configured pytest with unit and integration tests
@@ -205,18 +205,30 @@ The API will be available at:
 
 **Chat & LLM:**
 - `POST /llm/generate` - Generate text from prompt
-- `POST /llm/chat` - Chat with conversation history
+- `POST /llm/chat` - Chat with conversation history, memory, RAG, and tools
 
 **RAG (Retrieval Augmented Generation):**
 - `POST /llm/rag/query` - Query knowledge base with RAG
 - `POST /llm/rag/documents` - Add documents to knowledge base
 - `POST /llm/rag/directory` - Add directory of documents
 
-**MCP Management:**
-- `POST /api/mpc/instances` - Create MPC server instance
-- `GET /api/mpc/instances` - List all instances
-- `GET /api/mpc/instances/{id}` - Get instance status
-- `DELETE /api/mpc/instances/{id}` - Stop instance
+**MCP Tools:**
+- `GET /mpc/tools` - List all available tools with metadata
+- `GET /mpc/tools/names` - Get tool names only
+- `GET /mpc/tools/{tool_name}` - Get detailed tool information
+
+**Memory:**
+- `GET /llm/memory/context` - Get enriched memory context
+- `GET /llm/memory/history` - Get conversation history
+- `GET /llm/memory/stats` - Get memory statistics
+- `POST /llm/memory/search` - Semantic search across memories
+- `DELETE /llm/memory/session/{session_id}` - Clear session memory
+
+**Configuration:**
+- `GET /config/status` - System configuration status
+- `GET /config/session/{session_id}` - Get session configuration
+- `POST /config/session` - Create/Update session configuration
+- `DELETE /config/session/{session_id}` - Reset session configuration
 
 ### Running the CLI
 

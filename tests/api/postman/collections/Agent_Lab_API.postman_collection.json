@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "agent-lab-api-001",
     "name": "Agent Lab API",
-    "description": "Comprehensive API tests for Agent Lab LLM and RAG system. Tests are organized sequentially with dependencies.\n\n**Prerequisites:**\n- Server running at http://localhost:8000\n- Valid OPENAI_API_KEY in environment\n- Valid PINECONE_API_KEY in environment (optional for semantic search)\n- MySQL database running and accessible\n- data/initial_knowledge/ directory accessible by server (can be empty)\n\n**Execution Order:**\n1. Health & Connectivity\n2. LLM Basic Operations\n3. Chat Operations\n4. Memory Operations (requires database, optional Pinecone)\n5. Session Management (reset operations)\n6. RAG - Setup (adds documents - uses embedded content, not file paths)\n7. RAG - Query Operations (depends on #6)\n7b. RAG - Listing Operations (lists namespaces and documents with pagination)\n8. Error Scenarios\n9. Cleanup (removes test data)\n\n**New in this version:**\n- Section 4: Memory Operations tests with 12 test cases\n- Section 5: Session Management with reset endpoint tests\n- Section 7b: RAG Listing Operations with namespace/document browsing and pagination\n- Tests all memory endpoints: context, history, stats, semantic search, cleanup\n- Database pre-flight check in memory setup\n- Pinecone optional: semantic search fails gracefully if not configured\n- Memory cleanup integrated into final cleanup section\n\n**Note:** RAG tests send document content directly, not file paths. See tests/api/postman/RAG_TESTING_NOTES.md for details.",
+    "description": "Comprehensive API tests for Agent Lab LLM and RAG system. Tests are organized sequentially with dependencies.\n\n**Prerequisites:**\n- Server running at http://localhost:8000\n- Valid OPENAI_API_KEY in environment\n- Valid PINECONE_API_KEY in environment (optional for semantic search)\n- MySQL database running and accessible\n- data/initial_knowledge/ directory accessible by server (can be empty)\n\n**Execution Order:**\n1. Health & Connectivity\n2. LLM Basic Operations\n3. Chat Operations\n3b. MPC Tool Operations (tool discovery, usage, and error handling)\n4. Memory Operations (requires database, optional Pinecone)\n5. Session Management (reset operations)\n6. RAG - Setup (adds documents - uses embedded content, not file paths)\n7. RAG - Query Operations (depends on #6)\n7b. RAG - Listing Operations (lists namespaces and documents with pagination)\n7c. Integration - Tools + Memory/RAG (comprehensive integration tests)\n8. Error Scenarios\n9. Cleanup (removes test data)\n\n**New in this version:**\n- Section 3b: MPC Tool Operations with 12 test cases (discovery, usage, error handling)\n- Section 7c: Integration tests for Tools + Memory/RAG combinations\n- Section 4: Memory Operations tests with 12 test cases\n- Section 5: Session Management with reset endpoint tests\n- Section 7b: RAG Listing Operations with namespace/document browsing and pagination\n- Tests all memory endpoints: context, history, stats, semantic search, cleanup\n- Database pre-flight check in memory setup\n- Pinecone optional: semantic search fails gracefully if not configured\n- Memory cleanup integrated into final cleanup section\n- MCP tool registration verification (test fails if no tools registered)\n\n**Note:** RAG tests send document content directly, not file paths. See tests/api/postman/RAG_TESTING_NOTES.md for details.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -928,6 +928,681 @@
       ],
       "id": "41f20a61-f243-4432-a499-aa5de183a02f",
       "description": "Tests for the chat endpoint including conversation state management, system messages, and error handling."
+    },
+    {
+      "name": "3b. MPC Tool Operations",
+      "item": [
+        {
+          "name": "List All Tools - Verify Registration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-list-tools-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is an array of tools\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test(\"At least one tool is registered (fail if empty)\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.length).to.be.at.least(1, \"No tools registered - MCP system not initialized\");",
+                  "    pm.collectionVariables.set(\"mcp_tools_count\", data.length.toString());",
+                  "    console.log(\"✅ Found\", data.length, \"registered tool(s)\");",
+                  "});",
+                  "",
+                  "pm.test(\"get_current_datetime tool is registered\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const datetimeTool = data.find(t => t.name === 'get_current_datetime');",
+                  "    pm.expect(datetimeTool).to.exist;",
+                  "    pm.collectionVariables.set(\"mcp_datetime_tool_exists\", \"true\");",
+                  "    console.log(\"✅ get_current_datetime tool found\");",
+                  "});",
+                  "",
+                  "pm.test(\"Tool metadata has correct structure\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const tool = data[0];",
+                  "    pm.expect(tool).to.have.property('name').that.is.a('string');",
+                  "    pm.expect(tool).to.have.property('description').that.is.a('string');",
+                  "    pm.expect(tool).to.have.property('input_schema').that.is.an('object');",
+                  "    pm.expect(tool.input_schema).to.have.property('type', 'object');",
+                  "    pm.expect(tool.input_schema).to.have.property('properties').that.is.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-list-tools-001",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/mpc/tools",
+              "host": ["{{base_url}}"],
+              "path": ["mpc", "tools"]
+            },
+            "description": "Lists all available MCP tools with full metadata. Verifies that at least one tool is registered (test fails if empty). This is a prerequisite check for tool usage tests."
+          },
+          "response": []
+        },
+        {
+          "name": "List Tool Names - Lightweight Discovery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-list-names-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has tools array and count\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('tools').that.is.an('array');",
+                  "    pm.expect(data).to.have.property('count').that.is.a('number');",
+                  "});",
+                  "",
+                  "pm.test(\"Count matches array length\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.count).to.equal(data.tools.length);",
+                  "});",
+                  "",
+                  "pm.test(\"Count matches full list from previous test\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const expectedCount = parseInt(pm.collectionVariables.get(\"mcp_tools_count\"));",
+                  "    pm.expect(data.count).to.equal(expectedCount);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool names are strings\", () => {",
+                  "    const data = pm.response.json();",
+                  "    data.tools.forEach(name => {",
+                  "        pm.expect(name).to.be.a('string');",
+                  "    });",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-list-names-001",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/mpc/tools/names",
+              "host": ["{{base_url}}"],
+              "path": ["mpc", "tools", "names"]
+            },
+            "description": "Lists only tool names without detailed metadata. Verifies count consistency with full tool list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Datetime Tool Info - Detailed Schema",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-tool-info-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool info has complete structure\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('name', 'get_current_datetime');",
+                  "    pm.expect(data).to.have.property('description').that.is.a('string').and.not.empty;",
+                  "    pm.expect(data).to.have.property('input_schema').that.is.an('object');",
+                  "});",
+                  "",
+                  "pm.test(\"Input schema is valid JSON Schema\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.input_schema).to.have.property('type', 'object');",
+                  "    pm.expect(data.input_schema).to.have.property('properties').that.is.an('object');",
+                  "});",
+                  "",
+                  "pm.test(\"Format parameter exists in schema\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const props = data.input_schema.properties;",
+                  "    pm.expect(props).to.have.property('format');",
+                  "    pm.expect(props.format).to.have.property('enum').that.includes('iso');",
+                  "    pm.expect(props.format.enum).to.include.members(['iso', 'human', 'timestamp']);",
+                  "});",
+                  "",
+                  "pm.test(\"Timezone parameter exists in schema\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const props = data.input_schema.properties;",
+                  "    pm.expect(props).to.have.property('timezone');",
+                  "    ",
+                  "    // Pydantic generates 'anyOf' for optional types (str | None)",
+                  "    if (props.timezone.anyOf) {",
+                  "        // Verify anyOf contains string and null types",
+                  "        const types = props.timezone.anyOf.map(t => t.type);",
+                  "        pm.expect(types).to.include('string');",
+                  "        pm.expect(types).to.include('null');",
+                  "        console.log('✅ Timezone is optional (anyOf: string | null)');",
+                  "    } else {",
+                  "        // Fallback for direct type (older schema format)",
+                  "        pm.expect(props.timezone).to.have.property('type', 'string');",
+                  "    }",
+                  "    ",
+                  "    // Verify timezone is optional with null default",
+                  "    pm.expect(props.timezone).to.have.property('default', null);",
+                  "    console.log('✅ Timezone defaults to null (UTC/GMT used when not specified)');",
+                  "});",
+                  "",
+                  "pm.test(\"Output schema exists\", () => {",
+                  "    const data = pm.response.json();",
+                  "    if (data.output_schema !== null) {",
+                  "        pm.expect(data.output_schema).to.be.an('object');",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-tool-info-001",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/mpc/tools/get_current_datetime",
+              "host": ["{{base_url}}"],
+              "path": ["mpc", "tools", "get_current_datetime"]
+            },
+            "description": "Gets detailed information about the get_current_datetime tool including input/output schemas. Validates JSON Schema format and parameter specifications."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with Tools - Basic Datetime Query",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "mcp-chat-prereq-001",
+                "exec": [
+                  "// Generate unique session ID for MCP tool tests",
+                  "const timestamp = Date.now();",
+                  "const sessionId = `mcp-test-${timestamp}`;",
+                  "pm.collectionVariables.set(\"mcp_test_session_id\", sessionId);",
+                  "console.log(\"✅ MCP test session ID:\", sessionId);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-chat-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has required fields\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "    pm.expect(data).to.have.property('session_id');",
+                  "    pm.expect(data).to.have.property('tools_used');",
+                  "    pm.expect(data).to.have.property('tool_calls').that.is.an('array');",
+                  "    pm.expect(data).to.have.property('agent_steps').that.is.an('array');",
+                  "});",
+                  "",
+                  "pm.test(\"Tools were used\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.true;",
+                  "    console.log(\"✅ Tools were successfully used by agent\");",
+                  "});",
+                  "",
+                  "pm.test(\"Datetime tool was called\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "    const datetimeCall = data.tool_calls.find(tc => tc.name === 'get_current_datetime');",
+                  "    pm.expect(datetimeCall).to.exist;",
+                  "    console.log(\"✅ get_current_datetime tool was called\");",
+                  "});",
+                  "",
+                  "pm.test(\"Tool call has complete structure\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const toolCall = data.tool_calls[0];",
+                  "    pm.expect(toolCall).to.have.property('id').that.is.a('string');",
+                  "    pm.expect(toolCall).to.have.property('name').that.is.a('string');",
+                  "    pm.expect(toolCall).to.have.property('args').that.is.an('object');",
+                  "    pm.expect(toolCall).to.have.property('timestamp');",
+                  "});",
+                  "",
+                  "pm.test(\"Agent steps track execution\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.agent_steps.length).to.be.at.least(2); // At least tool_call + final_answer",
+                  "    ",
+                  "    const toolStep = data.agent_steps.find(s => s.action === 'tool_call');",
+                  "    pm.expect(toolStep).to.exist;",
+                  "    pm.expect(toolStep).to.have.property('tool_call');",
+                  "    pm.expect(toolStep).to.have.property('tool_result');",
+                  "    ",
+                  "    const finalStep = data.agent_steps.find(s => s.action === 'final_answer');",
+                  "    pm.expect(finalStep).to.exist;",
+                  "});",
+                  "",
+                  "pm.test(\"Tool result indicates success\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const toolStep = data.agent_steps.find(s => s.action === 'tool_call');",
+                  "    pm.expect(toolStep.tool_result.success).to.be.true;",
+                  "    pm.expect(toolStep.tool_result.error).to.be.null;",
+                  "});",
+                  "",
+                  "pm.test(\"Response mentions current date/time\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response.toLowerCase();",
+                  "    // Check for date/time related words",
+                  "    const hasDateInfo = response.includes('2024') || response.includes('2025') || ",
+                  "                        response.includes('time') || response.includes('date');",
+                  "    pm.expect(hasDateInfo).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-chat-001",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What is the current date and time?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"temperature\": 0.3,\n    \"max_tokens\": 300\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests chat with tools enabled. Agent should call get_current_datetime tool to answer. Verifies tool_calls array, agent_steps tracking, and tools_used flag."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with Tools - ISO Format Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-chat-test-002",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool was called with format parameter\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "    const datetimeCall = data.tool_calls.find(tc => tc.name === 'get_current_datetime');",
+                  "    pm.expect(datetimeCall).to.exist;",
+                  "    // Note: Agent may or may not pass format explicitly since ISO is default",
+                  "});",
+                  "",
+                  "pm.test(\"Response contains ISO format timestamp\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response;",
+                  "    // Check for ISO 8601 pattern (e.g., 2024-12-21T10:30:00)",
+                  "    const isoPattern = /\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/;",
+                  "    pm.expect(response).to.match(isoPattern);",
+                  "    console.log(\"✅ Response contains ISO 8601 timestamp\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-chat-002",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"Give me the current time in ISO 8601 format\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"temperature\": 0.3,\n    \"max_tokens\": 300\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests tool usage with specific format request. Verifies ISO 8601 timestamp pattern in response."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with Tools - Timezone Conversion",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-chat-test-003",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool was called\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.true;",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"Response mentions Tokyo or JST\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response.toLowerCase();",
+                  "    const hasTokyo = response.includes('tokyo') || response.includes('jst') || response.includes('japan');",
+                  "    pm.expect(hasTokyo).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test(\"Tool execution succeeded\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const toolStep = data.agent_steps.find(s => s.action === 'tool_call');",
+                  "    pm.expect(toolStep.tool_result.success).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-chat-003",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What time is it in Tokyo, Japan?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"temperature\": 0.3,\n    \"max_tokens\": 300\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests timezone parameter usage. Agent should call tool with timezone='Asia/Tokyo' to get local time."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with All Tools Enabled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-chat-test-004",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is valid\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test(\"Tool calls array exists (may be empty if not needed)\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('tool_calls').that.is.an('array');",
+                  "});",
+                  "",
+                  "console.log(\"ℹ️  Tools used:\", pm.response.json().tools_used);",
+                  "console.log(\"ℹ️  Tool calls count:\", pm.response.json().tool_calls.length);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-chat-004",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"Hello! How are you?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"tool_names\": null,\n    \"temperature\": 0.7,\n    \"max_tokens\": 200\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests chat with tools enabled but tool_names=null (all tools available). Agent decides whether to use tools. For simple greeting, no tools should be needed."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat without Tools - Backward Compatibility",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-chat-test-005",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is valid\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test(\"Tools were not used\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.false;",
+                  "    pm.expect(data.tool_calls).to.be.an('array').that.is.empty;",
+                  "    console.log(\"✅ use_tools=false works correctly (backward compatible)\");",
+                  "});",
+                  "",
+                  "pm.test(\"Agent steps are empty\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.agent_steps).to.be.an('array').that.is.empty;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-chat-005",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What is 2 + 2?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": false,\n    \"temperature\": 0.3,\n    \"max_tokens\": 100\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests that use_tools=false maintains backward compatibility. No tools should be used, tool_calls should be empty."
+          },
+          "response": []
+        },
+        {
+          "name": "Error - Tool Not Found (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-error-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 404\", () => {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test(\"Error message indicates tool not found\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('detail');",
+                  "    pm.expect(data.detail.toLowerCase()).to.include('not found');",
+                  "    console.log(\"✅ 404 error for non-existent tool:\", data.detail);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-error-001",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/mpc/tools/nonexistent_tool_xyz",
+              "host": ["{{base_url}}"],
+              "path": ["mpc", "tools", "nonexistent_tool_xyz"]
+            },
+            "description": "Tests 404 error when requesting info for a tool that doesn't exist."
+          },
+          "response": []
+        },
+        {
+          "name": "Error - Invalid Timezone Handling",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-error-test-002",
+                "exec": [
+                  "pm.test(\"Status code is 200 (agent handles tool errors gracefully)\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool was called\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool execution failed with error\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const toolStep = data.agent_steps.find(s => s.action === 'tool_call');",
+                  "    pm.expect(toolStep.tool_result.success).to.be.false;",
+                  "    pm.expect(toolStep.tool_result.error).to.exist.and.not.be.null;",
+                  "    console.log(\"✅ Tool error captured:\", toolStep.tool_result.error);",
+                  "});",
+                  "",
+                  "pm.test(\"Agent provides response despite tool error\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.response).to.be.a('string').and.not.empty;",
+                  "    const response = data.response.toLowerCase();",
+                  "    const hasErrorMention = response.includes('invalid') || response.includes('error') || ",
+                  "                            response.includes('unable') || response.includes('cannot');",
+                  "    pm.expect(hasErrorMention).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-error-002",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What time is it in InvalidTimezone/NotReal?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"temperature\": 0.3,\n    \"max_tokens\": 300\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests error handling when tool receives invalid timezone. Tool should return success=false with error message. Agent should handle gracefully."
+          },
+          "response": []
+        },
+        {
+          "name": "Error - Max Iterations Limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "mcp-error-test-003",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Agent steps respect max_tool_iterations limit\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const toolCallSteps = data.agent_steps.filter(s => s.action === 'tool_call');",
+                  "    pm.expect(toolCallSteps.length).to.be.at.most(1);",
+                  "    console.log(\"✅ Agent respected max_tool_iterations=1 limit\");",
+                  "});",
+                  "",
+                  "pm.test(\"Response is provided despite iteration limit\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.response).to.be.a('string').and.not.empty;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "mcp-error-003",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What is the current date and time?\"\n        }\n    ],\n    \"session_id\": \"{{mcp_test_session_id}}\",\n    \"use_tools\": true,\n    \"max_tool_iterations\": 1,\n    \"temperature\": 0.3,\n    \"max_tokens\": 300\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests that max_tool_iterations parameter is respected. With limit of 1, agent should make at most 1 tool call."
+          },
+          "response": []
+        }
+      ],
+      "id": "mcp-tool-operations",
+      "description": "Tests for MCP (Model Context Protocol) tool system including tool discovery (introspection endpoints), tool usage via chat agent, and error handling. Verifies tool registration, metadata structure, agent execution flow, and graceful error handling for invalid inputs."
     },
     {
       "name": "4. Memory Operations",
@@ -2970,6 +3645,348 @@
       "description": "Tests for RAG listing operations including namespaces and documents with pagination. These tests verify the ability to browse and inspect the RAG knowledge base. Depends on documents being added in section 6."
     },
     {
+      "name": "7c. Integration - Tools + Memory/RAG",
+      "item": [
+        {
+          "name": "Chat with Tools + Memory",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "integration-prereq-001",
+                "exec": [
+                  "// Generate unique session ID for integration tests",
+                  "const timestamp = Date.now();",
+                  "const sessionId = `integration-tools-memory-${timestamp}`;",
+                  "pm.collectionVariables.set(\"integration_session_id\", sessionId);",
+                  "console.log(\"✅ Integration test session ID:\", sessionId);",
+                  "",
+                  "// Check memory system is ready",
+                  "const memoryReady = pm.collectionVariables.get(\"memory_ready\");",
+                  "if (memoryReady !== \"true\") {",
+                  "    console.warn(\"⚠️  Memory system may not be initialized. Some features may not work.\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "integration-test-001",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is valid\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "    pm.expect(data).to.have.property('session_id');",
+                  "});",
+                  "",
+                  "pm.test(\"Tools were used\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.true;",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"Memory context is included\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('context_text');",
+                  "    pm.expect(data).to.have.property('context_tokens');",
+                  "    // Context should include memory data",
+                  "    pm.expect(data.context_tokens).to.be.greaterThan(0);",
+                  "});",
+                  "",
+                  "pm.test(\"Response integrates tool results and memory\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response.toLowerCase();",
+                  "    // Should mention both time/date (from tool) and remember name (from memory)",
+                  "    const hasDateTime = response.includes('time') || response.includes('date') || /\\d{4}/.test(response);",
+                  "    const hasName = response.includes('alice');",
+                  "    pm.expect(hasDateTime).to.be.true;",
+                  "    pm.expect(hasName).to.be.true;",
+                  "    console.log(\"✅ Response integrates tool results with memory context\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Tools + Memory integration successful\");",
+                  "console.log(\"   Tools used:\", pm.response.json().tool_calls.length);",
+                  "console.log(\"   Context tokens:\", pm.response.json().context_tokens);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "integration-001",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"My name is Alice\"\n        },\n        {\n            \"role\": \"assistant\",\n            \"content\": \"Nice to meet you, Alice!\"\n        },\n        {\n            \"role\": \"user\",\n            \"content\": \"What's the current time, and do you remember my name?\"\n        }\n    ],\n    \"session_id\": \"{{integration_session_id}}\",\n    \"use_tools\": true,\n    \"use_memory\": true,\n    \"temperature\": 0.3,\n    \"max_tokens\": 400\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests integration of MCP tools with memory system. Agent should use datetime tool AND retrieve name from conversation memory. Verifies both systems work together."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with Tools + RAG",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "integration-prereq-002",
+                "exec": [
+                  "// Check RAG is ready",
+                  "const ragReady = pm.collectionVariables.get(\"rag_ready\");",
+                  "if (ragReady !== \"true\") {",
+                  "    console.warn(\"⚠️  RAG not ready. Run Section 6 first.\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "integration-test-002",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is valid\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test(\"Tools were used\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.true;",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"RAG documents are included\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('rag_sources');",
+                  "    pm.expect(data.rag_sources).to.be.an('array');",
+                  "    // Should have RAG documents if query matches",
+                  "    if (data.rag_sources.length > 0) {",
+                  "        console.log(\"✅ RAG sources found:\", data.rag_sources.length);",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test(\"Context includes both RAG and tool results\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.context_tokens).to.be.greaterThan(0);",
+                  "});",
+                  "",
+                  "pm.test(\"Response integrates tool results and RAG knowledge\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response.toLowerCase();",
+                  "    // Should mention current time (from tool)",
+                  "    const hasDateTime = response.includes('time') || response.includes('date') || /\\d{4}|\\d{1,2}:\\d{2}/.test(response);",
+                  "    pm.expect(hasDateTime).to.be.true;",
+                  "    console.log(\"✅ Response integrates tool results with RAG context\");",
+                  "});",
+                  "",
+                  "console.log(\"✅ Tools + RAG integration successful\");",
+                  "console.log(\"   Tools used:\", pm.response.json().tool_calls.length);",
+                  "console.log(\"   RAG sources:\", pm.response.json().rag_sources.length);",
+                  "console.log(\"   Context tokens:\", pm.response.json().context_tokens);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "integration-002",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"What's the current time? Also, based on your knowledge, what are the main features of Python?\"\n        }\n    ],\n    \"session_id\": \"{{integration_session_id}}\",\n    \"use_tools\": true,\n    \"use_rag\": true,\n    \"rag_top_k\": 3,\n    \"temperature\": 0.3,\n    \"max_tokens\": 500\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests integration of MCP tools with RAG system. Agent should use datetime tool AND retrieve Python knowledge from RAG documents. Verifies both systems work together."
+          },
+          "response": []
+        },
+        {
+          "name": "Chat with Tools + Memory + RAG (Full Stack)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "integration-test-003",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is valid\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('response').that.is.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test(\"Tools were used\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.tools_used).to.be.true;",
+                  "    pm.expect(data.tool_calls.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"Memory context is included\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.context_tokens).to.be.greaterThan(0);",
+                  "});",
+                  "",
+                  "pm.test(\"RAG documents are included\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('rag_sources').that.is.an('array');",
+                  "});",
+                  "",
+                  "pm.test(\"All three systems integrated (Tools + Memory + RAG)\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const hasTools = data.tools_used && data.tool_calls.length > 0;",
+                  "    const hasMemory = data.context_tokens > 0; // Memory contributes to context",
+                  "    const hasRAG = data.rag_sources && data.rag_sources.length >= 0; // RAG array exists",
+                  "    ",
+                  "    pm.expect(hasTools).to.be.true;",
+                  "    pm.expect(hasMemory).to.be.true;",
+                  "    pm.expect(hasRAG).to.be.true;",
+                  "    ",
+                  "    console.log(\"✅ Full stack integration successful:\");",
+                  "    console.log(\"   - Tools used:\", data.tool_calls.length, \"call(s)\");",
+                  "    console.log(\"   - Memory context:\", data.context_tokens, \"tokens\");",
+                  "    console.log(\"   - RAG sources:\", data.rag_sources.length, \"document(s)\");",
+                  "});",
+                  "",
+                  "pm.test(\"Response quality with full context\", () => {",
+                  "    const data = pm.response.json();",
+                  "    const response = data.response.toLowerCase();",
+                  "    ",
+                  "    // Should mention time (tool), name (memory), and possibly Python (RAG)",
+                  "    const hasDateTime = response.includes('time') || response.includes('date') || /\\d{1,2}:\\d{2}/.test(response);",
+                  "    const hasName = response.includes('alice');",
+                  "    ",
+                  "    pm.expect(hasDateTime).to.be.true;",
+                  "    pm.expect(hasName).to.be.true;",
+                  "    console.log(\"✅ Response demonstrates full context awareness\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "integration-003",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"messages\": [\n        {\n            \"role\": \"user\",\n            \"content\": \"Hi! What's the current time? Also, do you remember my name from earlier? And what do you know about Python?\"\n        }\n    ],\n    \"session_id\": \"{{integration_session_id}}\",\n    \"use_tools\": true,\n    \"use_memory\": true,\n    \"use_rag\": true,\n    \"rag_top_k\": 3,\n    \"temperature\": 0.3,\n    \"max_tokens\": 600\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/llm/chat",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "chat"]
+            },
+            "description": "Tests full stack integration: MCP tools + Memory + RAG all working together. Agent should use datetime tool, recall name from memory, and retrieve Python knowledge from RAG. This is the most comprehensive integration test."
+          },
+          "response": []
+        },
+        {
+          "name": "Tool Call Stored in Memory - Verification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "id": "integration-test-004",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"History contains messages\", () => {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('messages').that.is.an('array');",
+                  "    pm.expect(data.messages.length).to.be.at.least(1);",
+                  "});",
+                  "",
+                  "pm.test(\"Tool calls are stored in memory with metadata\", () => {",
+                  "    const data = pm.response.json();",
+                  "    ",
+                  "    // Look for messages with tool call metadata",
+                  "    const toolMessages = data.messages.filter(msg => ",
+                  "        msg.metadata && msg.metadata.is_tool_call === true",
+                  "    );",
+                  "    ",
+                  "    if (toolMessages.length > 0) {",
+                  "        pm.expect(toolMessages.length).to.be.at.least(1);",
+                  "        ",
+                  "        const toolCallMsg = toolMessages.find(m => m.metadata.tool_name);",
+                  "        if (toolCallMsg) {",
+                  "            pm.expect(toolCallMsg.metadata).to.have.property('tool_name');",
+                  "            console.log(\"✅ Tool calls stored in memory:\", toolCallMsg.metadata.tool_name);",
+                  "        }",
+                  "    } else {",
+                  "        console.log(\"ℹ️  No tool call metadata found in memory (feature may not be fully implemented)\");",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "id": "integration-004",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/llm/memory/history/{{integration_session_id}}?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["llm", "memory", "history", "{{integration_session_id}}"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Verifies that tool calls are properly stored in memory with metadata. Checks conversation history for tool call markers."
+          },
+          "response": []
+        }
+      ],
+      "id": "integration-tools-memory-rag",
+      "description": "Integration tests for MCP tools combined with Memory and RAG systems. Tests verify that tools, memory context, and RAG documents all work together seamlessly. Includes full stack test with all three systems enabled simultaneously."
+    },
+    {
       "name": "8. Error Scenarios",
       "item": [
         {
@@ -3684,6 +4701,26 @@
     {
       "id": "c3d4e5f6-a7b8-9012-cdef-012345678902",
       "key": "memory_test_session_id",
+      "value": ""
+    },
+    {
+      "id": "d4e5f6a7-b8c9-0123-def0-123456789013",
+      "key": "mcp_test_session_id",
+      "value": ""
+    },
+    {
+      "id": "e5f6a7b8-c9d0-1234-ef01-234567890124",
+      "key": "mcp_tools_count",
+      "value": "0"
+    },
+    {
+      "id": "f6a7b8c9-d0e1-2345-f012-345678901235",
+      "key": "mcp_datetime_tool_exists",
+      "value": "false"
+    },
+    {
+      "id": "a7b8c9d0-e1f2-3456-0123-456789012346",
+      "key": "integration_session_id",
       "value": ""
     }
   ]

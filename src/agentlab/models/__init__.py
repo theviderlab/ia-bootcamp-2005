@@ -46,18 +46,6 @@ class RAGResult:
 
 
 @dataclass
-class MPCInstanceInfo:
-    """Information about an MPC server instance."""
-
-    instance_id: str
-    status: Literal["running", "stopped", "error"]
-    host: str
-    port: int
-    created_at: datetime
-    metadata: dict[str, Any] | None = None
-
-
-@dataclass
 class KnowledgeDocument:
     """A document stored in the knowledge base."""
 
@@ -93,6 +81,39 @@ class MemoryStats:
     profile_attributes_count: int
     oldest_message_date: datetime | None
     newest_message_date: datetime | None
+
+
+@dataclass
+class ToolCall:
+    """Represents a tool call made by the LLM."""
+
+    id: str
+    name: str
+    args: dict[str, Any]
+    timestamp: datetime | None = None
+
+
+@dataclass
+class ToolResult:
+    """Result from executing a tool call."""
+
+    tool_call_id: str
+    tool_name: str
+    result: dict[str, Any]
+    success: bool
+    error: str | None = None
+    timestamp: datetime | None = None
+
+
+@dataclass
+class AgentStep:
+    """Represents a single step in the agent's reasoning process."""
+
+    step_number: int
+    action: Literal["tool_call", "final_answer"]
+    tool_call: ToolCall | None = None
+    tool_result: ToolResult | None = None
+    reasoning: str | None = None
 
 
 # ============================================================================
@@ -406,10 +427,12 @@ __all__ = [
     # Data models
     "ChatMessage",
     "RAGResult",
-    "MPCInstanceInfo",
     "KnowledgeDocument",
     "MemoryContext",
     "MemoryStats",
+    "ToolCall",
+    "ToolResult",
+    "AgentStep",
     # Protocol definitions
     "LLMInterface",
     "RAGService",

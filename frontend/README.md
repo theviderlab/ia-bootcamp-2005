@@ -138,12 +138,18 @@ Interface for managing the knowledge base and context.
 - **Selection**: Toggles to enable/disable specific documents or namespaces for the current chat context.
 
 #### C. MCP Section (Model Context Protocol)
-- **Status**: *Future Implementation*.
-- **Placeholder**: Reserved space for managing MCP servers and tools.
-- **Planned UI Elements**:
-  - List of available MCP servers with connection status indicators.
-  - Connect/Disconnect buttons per server.
-  - **Collapsible list of tools per connected server.
+Interface para gestionar las herramientas (tools) disponibles del sistema.
+- **Lista de Herramientas**: Muestra todas las herramientas MCP registradas en el sistema.
+- **Toggles On/Off**: Cada herramienta tiene un checkbox/toggle para activarla o desactivarla.
+- **Estado Visual**: Indica qué herramientas están actualmente activas.
+- **Comportamiento**: 
+  - Cuando al menos una herramienta está activada, el chat enviará `use_tools=true` y `available_tools=[...]`.
+  - Cuando ninguna herramienta está activada, el chat funciona sin herramientas (`use_tools=false`).
+  - Las herramientas seleccionadas determinan exactamente qué capacidades tiene el agente en la conversación.
+- **Información de Herramientas**: Al hacer hover sobre una herramienta, muestra un tooltip con:
+  - Nombre de la herramienta
+  - Descripción breve de su funcionalidad
+  - Esquema de parámetros (opcional, para usuarios avanzados)
 
 ## Component Details by Tab
 
@@ -347,6 +353,31 @@ The frontend interacts with the backend API (default: `http://localhost:8000`). 
   - **Payload**: `enabled` (bool), `namespaces` (array).
   - Called when selecting/deselecting documents (mapped to namespaces).
 
+### MCP Sidebar
+- **Get Available Tools**: `GET /mpc/tools` o `GET /mpc/tools/names`
+  - **Response**: Lista de herramientas disponibles con sus metadatos.
+  - **Llamar**: Al cargar el componente del sidebar.
+  - **Display**: 
+    - Crear un toggle/checkbox por cada herramienta.
+    - Mostrar nombre y descripción breve.
+    - Añadir tooltip con información detallada.
+- **Get Tool Details**: `GET /mpc/tools/{tool_name}`
+  - **Response**: Información detallada de una herramienta específica.
+  - **Uso**: Para tooltips o modales informativos.
+- **Integration with Chat**: 
+  - Al enviar mensaje en Chat, incluir:
+    - `use_tools`: `true` si hay herramientas seleccionadas, `false` si no.
+    - `available_tools`: Array con nombres de herramientas activas (ej: `["calculator", "get_current_datetime"]`).
+    - `tool_choice`: `"auto"` (dejar que el LLM decida cuándo usar las herramientas).
+  - **Estado Local**: Mantener array de `selectedTools` en estado del componente.
+  - **Sincronización**: Los toggles actualizan `selectedTools`, y este se pasa al endpoint `/llm/chat`.
+- **Tool Results Display**:
+  - En respuesta del chat, mostrar visualmente cuando se usaron herramientas:
+    - `tools_used` (bool): Indica si se usaron herramientas.
+    - `tool_calls` (array): Lista de llamadas realizadas.
+    - `tool_results` (array): Resultados de las ejecuciones.
+  - Considerar añadir badge o indicador en mensajes del asistente cuando incluyen uso de herramientas.
+
 ### Header Action Buttons
 - **Reset Session**: **(NEW ENDPOINT NEEDED)** `POST /session/reset`
   - **Payload**: `current_session_id` (string).
@@ -460,13 +491,167 @@ const sendMessage = async (message) => {
 
 **Nota:** Para producción con cientos de documentos, considerar agrupar por categorías (docs, api-reference, tutorials) o usar filtrado por document ID.
 
-### 8. MCP Endpoints (Future) 🔮
-- **Requirement**: When implementing the MCP section, endpoints will be needed to:
-  - `GET /mpc/servers`: List available MCP servers.
-  - `POST /mpc/servers/{id}/connect`: Connect to a server.
-  - `DELETE /mpc/servers/{id}/disconnect`: Disconnect from a server.
-  - `GET /mpc/servers/{id}/tools`: List available tools per server.
-  - `POST /mpc/tools/{id}/execute`: Execute a tool with parameters.
+### 8. MCP Endpoints ✅
+
+Los endpoints MCP permiten listar y gestionar las herramientas disponibles en el sistema.
+
+#### 8.1 Listar Todas las Herramientas
+
+**Endpoint disponible:** `GET /mpc/tools`
+
+Retorna todas las herramientas MCP registradas en el sistema con sus metadatos.
+
+**Respuesta esperada:**
+```json
+{
+  "tools": [
+    {
+      "name": "get_current_datetime",
+      "description": "Get the current date and time",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "calculator",
+      "description": "Perform mathematical calculations",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Mathematical expression to evaluate"
+          }
+        },
+        "required": ["expression"]
+      }
+    }
+  ]
+}
+```
+
+**Uso en UI:**
+- Llamar al cargar el componente MCP del sidebar
+- Mostrar cada herramienta con un toggle
+- Guardar el estado de herramientas seleccionadas en el estado del frontend
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/mpc/tools"
+```
+
+#### 8.2 Obtener Nombres de Herramientas (Simplificado)
+
+**Endpoint disponible:** `GET /mpc/tools/names`
+
+Retorna solo los nombres de las herramientas para una carga más rápida.
+
+**Respuesta esperada:**
+```json
+{
+  "tool_names": [
+    "get_current_datetime",
+    "calculator",
+    "web_search"
+  ]
+}
+```
+
+**Uso en UI:**
+- Alternativa ligera para inicializar el sidebar MCP
+- Útil si solo necesitas los nombres sin metadata completa
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/mpc/tools/names"
+```
+
+#### 8.3 Obtener Información de Herramienta Específica
+
+**Endpoint disponible:** `GET /mpc/tools/{tool_name}`
+
+Retorna información detallada de una herramienta específica.
+
+**URL de ejemplo:**
+```
+GET /mpc/tools/calculator
+```
+
+**Respuesta esperada:**
+```json
+{
+  "name": "calculator",
+  "description": "Perform mathematical calculations",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "expression": {
+        "type": "string",
+        "description": "Mathematical expression to evaluate"
+      }
+    },
+    "required": ["expression"]
+  },
+  "examples": [
+    {
+      "expression": "2 + 2",
+      "result": "4"
+    }
+  ]
+}
+```
+
+**Uso en UI:**
+- Mostrar información detallada al hacer hover o click en info icon
+- Tooltip con descripción y parámetros
+
+**Ejemplo con curl:**
+```bash
+curl "http://localhost:8000/mpc/tools/calculator"
+```
+
+#### 8.4 Integración con Chat
+
+**Endpoint de chat:** `POST /llm/chat`
+
+Cuando hay herramientas activadas en el sidebar, el frontend debe incluir estos parámetros:
+
+```json
+{
+  "messages": [...],
+  "use_tools": true,
+  "available_tools": ["get_current_datetime", "calculator"],
+  "tool_choice": "auto"
+}
+```
+
+**Parámetros:**
+- `use_tools` (bool): `true` si hay al menos una herramienta activada, `false` si todas están desactivadas
+- `available_tools` (array[string]): Array con los nombres de las herramientas activadas en el sidebar
+- `tool_choice` (string, opcional): "auto" permite al LLM decidir cuándo usar las herramientas
+
+**Lógica del Frontend:**
+```javascript
+// En el componente MCP Sidebar
+const [selectedTools, setSelectedTools] = useState([]);
+
+// Al enviar mensaje en Chat
+const sendMessage = async (message) => {
+  const payload = {
+    messages: [...messages, { role: 'user', content: message }],
+    use_tools: selectedTools.length > 0,
+    available_tools: selectedTools,
+    tool_choice: 'auto'
+  };
+  
+  const response = await chatService.sendMessage(payload);
+  // ...
+};
+```
+
+**Nota:** Los endpoints `/mpc/tools`, `/mpc/tools/names`, y `/mpc/tools/{tool_name}` ya están disponibles según la documentación de la API. No se requieren nuevos endpoints para esta funcionalidad.
 
 ## User Flows
 
@@ -511,6 +696,37 @@ const sendMessage = async (message) => {
 5. User decides to disable some memory types or reduce RAG chunks.
 6. Adjusts settings in sidebar.
 7. Sends message again with reduced context.
+
+### Flow 4bis: Using MCP Tools
+1. User wants to enable calculator functionality for mathematical queries.
+2. User opens **MCP Section** in right sidebar.
+3. Sees list of available tools (loaded from `GET /mpc/tools`):
+   - ☐ get_current_datetime
+   - ☐ calculator
+   - ☐ web_search
+4. User clicks on **calculator** checkbox to enable it.
+5. Checkbox state changes to checked ☑.
+6. Frontend updates `selectedTools` array: `["calculator"]`.
+7. User types message: "What is 234 * 567?"
+8. Frontend calls `POST /llm/chat` with:
+   ```json
+   {
+     "messages": [...],
+     "use_tools": true,
+     "available_tools": ["calculator"],
+     "tool_choice": "auto"
+   }
+   ```
+9. Backend processes with agent that can call calculator tool.
+10. Response includes:
+    - `tools_used`: true
+    - `tool_calls`: [{"tool_name": "calculator", "input": {"expression": "234 * 567"}, ...}]
+    - `tool_results`: [{"tool_name": "calculator", "output": "132678", ...}]
+    - `response`: "The result of 234 × 567 is 132,678."
+11. Chat message displays normally, optionally with badge "🔧 Tool Used: calculator".
+12. User can hover over badge to see tool execution details.
+13. To disable tools, user unchecks calculator box.
+14. Next messages will be sent with `use_tools: false`.
 
 ### Flow 5: Resetting Current Session
 1. User has been chatting and wants to start fresh topic.
@@ -647,7 +863,35 @@ export const sessionService = {
 };
 ```
 
-### Custom Hook Example
+**MCP Service:**
+```javascript
+// services/mcpService.js
+import axios from 'axios';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+export const mcpService = {
+  // Get all available tools
+  getTools: async () => {
+    const response = await axios.get(`${API_BASE_URL}/mpc/tools`);
+    return response.data;
+  },
+  
+  // Get tool names only (lightweight)
+  getToolNames: async () => {
+    const response = await axios.get(`${API_BASE_URL}/mpc/tools/names`);
+    return response.data;
+  },
+  
+  // Get detailed info for a specific tool
+  getToolInfo: async (toolName) => {
+    const response = await axios.get(`${API_BASE_URL}/mpc/tools/${toolName}`);
+    return response.data;
+  },
+};
+```
+
+**Session Service:**
 ```javascript
 // hooks/useChat.js
 import { useState } from 'react';
@@ -684,6 +928,73 @@ export const useChat = (sessionId) => {
   };
 
   return { messages, loading, sendMessage };
+};
+```
+
+**MCP Hook:**
+```javascript
+// hooks/useMCP.js
+import { useState, useEffect } from 'react';
+import { mcpService } from '../services/mcpService';
+
+export const useMCP = () => {
+  const [tools, setTools] = useState([]);
+  const [selectedTools, setSelectedTools] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Load available tools on mount
+  useEffect(() => {
+    const loadTools = async () => {
+      try {
+        setLoading(true);
+        const data = await mcpService.getTools();
+        setTools(data.tools || []);
+      } catch (err) {
+        console.error('Failed to load MCP tools:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadTools();
+  }, []);
+
+  // Toggle tool selection
+  const toggleTool = (toolName) => {
+    setSelectedTools((prev) => {
+      if (prev.includes(toolName)) {
+        return prev.filter((name) => name !== toolName);
+      } else {
+        return [...prev, toolName];
+      }
+    });
+  };
+
+  // Check if a tool is selected
+  const isToolSelected = (toolName) => {
+    return selectedTools.includes(toolName);
+  };
+
+  // Get config for chat request
+  const getToolsConfig = () => {
+    return {
+      use_tools: selectedTools.length > 0,
+      available_tools: selectedTools,
+      tool_choice: 'auto',
+    };
+  };
+
+  return {
+    tools,
+    selectedTools,
+    loading,
+    error,
+    toggleTool,
+    isToolSelected,
+    getToolsConfig,
+  };
 };
 ```
 

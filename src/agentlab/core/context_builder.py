@@ -14,7 +14,7 @@ from typing import Any
 
 import tiktoken
 
-from agentlab.models import MemoryContext, RAGResult
+from agentlab.models import MemoryContext, RAGResult, ToolResult
 
 
 @dataclass
@@ -35,6 +35,9 @@ class CombinedContext:
     # RAG components
     rag_documents: list[dict[str, Any]] | None = None
     rag_context: str = ""
+    
+    # Tool results
+    tool_results: list[ToolResult] | None = None
     
     # Metadata
     total_tokens_estimated: int = 0
@@ -65,14 +68,16 @@ class ContextBuilder:
         self,
         memory_context: MemoryContext | None = None,
         rag_result: RAGResult | None = None,
+        tool_results: list[ToolResult] | None = None,
         prioritize: str = "balanced",  # "memory", "rag", or "balanced"
     ) -> CombinedContext:
         """
-        Build combined context from memory and RAG.
+        Build combined context from memory, RAG, and tool results.
         
         Args:
             memory_context: Memory context from IntegratedMemoryService.
             rag_result: RAG retrieval result.
+            tool_results: List of tool execution results from MCP tools.
             prioritize: Prioritization strategy when truncating.
                 - "memory": Prioritize memory over RAG
                 - "rag": Prioritize RAG over memory
@@ -108,8 +113,12 @@ class ContextBuilder:
                 rag_text = self._format_rag_sources(rag_docs)
         
         # Estimate tokens (rough: 4 chars = 1 token)
+        tool_results_text = ""
+        if tool_results:
+            tool_results_text = self._format_tool_results(tool_results)
+        
         estimated_tokens = self._estimate_tokens(
-            short_term, semantic, profile, episodic, procedural, rag_text
+            short_term, semantic, profile, episodic, procedural, rag_text, tool_results_text
         )
         
         truncated = False
@@ -137,6 +146,7 @@ class ContextBuilder:
             procedural_patterns=procedural,
             rag_documents=rag_docs,
             rag_context=rag_text,
+            tool_results=tool_results,
             total_tokens_estimated=estimated_tokens,
             truncated=truncated,
             truncation_strategy=truncation_strategy,
@@ -166,6 +176,11 @@ class ContextBuilder:
             sections.append(
                 f"## Relevant Knowledge Base Documents\n{context.rag_context}"
             )
+        
+        # Tool results
+        if context.tool_results:
+            tool_text = self._format_tool_results(context.tool_results)
+            sections.append(f"## Tool Execution Results\n{tool_text}")
         
         # Semantic facts
         if context.semantic_facts:
@@ -199,6 +214,43 @@ class ContextBuilder:
             sections.append(f"## Context Warnings\n{warnings_text}")
         
         return "\n\n".join(sections) if sections else ""
+
+    def _format_tool_results(self, tool_results: list[ToolResult]) -> str:
+        """
+        Format tool execution results into readable text.
+        
+        Args:
+            tool_results: List of ToolResult objects from MCP tool executions.
+        
+        Returns:
+            Formatted string of tool results with status, output, and errors.
+        """
+        if not tool_results:
+            return ""
+        
+        formatted = []
+        for i, result in enumerate(tool_results, 1):
+            status = "✅ Success" if result.success else "❌ Failed"
+            timestamp = result.timestamp.strftime("%H:%M:%S") if result.timestamp else "N/A"
+            
+            header = f"### Tool {i}: `{result.tool_name}` ({status})"
+            header += f"\n**Time**: {timestamp}"
+            header += f"\n**Call ID**: {result.tool_call_id}"
+            
+            if result.error:
+                formatted.append(f"{header}\n**Error**: {result.error}")
+            else:
+                # Format result dict as readable text
+                result_text = ""
+                if isinstance(result.result, dict):
+                    for key, value in result.result.items():
+                        result_text += f"\n- **{key}**: {value}"
+                else:
+                    result_text = f"\n{result.result}"
+                
+                formatted.append(f"{header}\n**Result**:{result_text}")
+        
+        return "\n\n".join(formatted)
 
     def _format_rag_sources(self, sources: list[dict[str, Any]]) -> str:
         """
@@ -248,6 +300,7 @@ class ContextBuilder:
         episodic: str,
         procedural: list[str] | None,
         rag_text: str,
+        tool_results_text: str = "",
     ) -> int:
         """
         Estimate total tokens in context using tiktoken.
@@ -259,6 +312,7 @@ class ContextBuilder:
             episodic: Episodic summary text.
             procedural: Procedural patterns list.
             rag_text: RAG context text.
+            tool_results_text: Formatted tool results text.
         
         Returns:
             Accurate token count using tiktoken.
@@ -268,6 +322,7 @@ class ContextBuilder:
         total_tokens += self.count_tokens(short_term)
         total_tokens += self.count_tokens(episodic)
         total_tokens += self.count_tokens(rag_text)
+        total_tokens += self.count_tokens(tool_results_text)
         
         if semantic:
             total_tokens += sum(self.count_tokens(fact) for fact in semantic)

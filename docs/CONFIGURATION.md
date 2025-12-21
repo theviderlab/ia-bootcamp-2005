@@ -79,23 +79,31 @@ Los endpoints relevantes son:
 
 ### Context Builder
 
-El `ContextBuilder` combina información de memoria y RAG:
+El `ContextBuilder` combina información de memoria, RAG y herramientas:
 
 ```python
 from agentlab.core.context_builder import ContextBuilder
 
 builder = ContextBuilder(max_tokens=4000)
 
-# Combinar contextos
+# Combinar contextos (incluyendo tool results)
 combined_context = builder.build_context(
     memory_context=memory_context,
     rag_result=rag_result,
+    tool_results=tool_results,  # Resultados de herramientas ejecutadas
     prioritize="balanced"  # "memory" | "rag" | "balanced"
 )
 
 # Formatear para prompt
 formatted_text = builder.format_for_prompt(combined_context)
 ```
+
+**Tool Results Integration**: Los resultados de herramientas se formatean como una sección markdown "Tool Execution Results" que incluye:
+- Nombre de la herramienta
+- Estado de éxito/error
+- Timestamp de ejecución
+- ID de llamada
+- Resultado estructurado en formato legible
 
 ### Estructura de Contexto Combinado
 
@@ -112,6 +120,9 @@ class CombinedContext:
     # RAG
     rag_documents: list[dict[str, Any]] | None
     rag_context: str
+    
+    # Herramientas (NEW)
+    tool_results: list[ToolResult] | None
     
     # Metadata
     total_tokens_estimated: int

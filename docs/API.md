@@ -80,8 +80,8 @@ Información sobre la API y sus endpoints.
     },
     "memory": {
       "context": "/llm/memory/context",
-      "history": "/llm/memory/history",
-      "stats": "/llm/memory/stats",
+      "history": "/llm/memory/history/{session_id}",
+      "stats": "/llm/memory/stats/{session_id}",
       "search": "/llm/memory/search",
       "clear": "/llm/memory/session/{session_id}"
     },
@@ -94,10 +94,9 @@ Información sobre la API y sus endpoints.
       "update_rag": "/config/rag"
     },
     "mpc": {
-      "create_instance": "/mpc/instances",
-      "delete_instance": "/mpc/instances/{instance_id}",
-      "get_instance": "/mpc/instances/{instance_id}",
-      "list_instances": "/mpc/instances"
+      "list_tools": "/mpc/tools",
+      "list_tool_names": "/mpc/tools/names",
+      "get_tool_info": "/mpc/tools/{tool_name}"
     }
   }
 }
@@ -200,6 +199,16 @@ Genera una respuesta de chat basada en el historial de conversación.
 - `max_context_tokens` (int, opcional): Máximo de tokens para el contexto combinado (100-8000). Default: 4000
 - `context_priority` (string, opcional): Prioridad de contexto: "memory" (priorizar memoria), "rag" (priorizar RAG), o "balanced" (equilibrado). Default: "balanced"
 
+**Parámetros de herramientas MCP:**
+- `use_tools` (bool, opcional): Habilitar ejecución de herramientas MCP. Default: false
+- `tool_choice` (string, opcional): Control de selección de herramientas: "auto" (LLM decide), "none" (sin herramientas), o nombre específico de herramienta. Default: "auto"
+- `available_tools` (array[string], opcional): Lista de nombres de herramientas específicas a habilitar. Si no se especifica, todas las herramientas registradas están disponibles. Ejemplos: ["get_current_datetime"], ["calculator", "web_search"]
+- `max_tool_iterations` (int, opcional): Máximo número de iteraciones del agente con herramientas (1-20). Default: 5
+
+**Control de herramientas a dos niveles:**
+1. **Global**: `use_tools=true/false` activa/desactiva todas las herramientas
+2. **Selectivo**: `available_tools=["tool1", "tool2"]` limita a herramientas específicas
+
 **Respuesta:**
 ```json
 {
@@ -237,6 +246,25 @@ Genera una respuesta de chat basada en el historial de conversación.
   - `doc_id` (string): Identificador del documento fuente
   - `namespace` (string): Namespace de Pinecone donde está almacenado
   - `chunk_index` (int|null): Índice del chunk dentro del documento
+- `tools_used` (bool): Indica si se utilizaron herramientas en la respuesta
+- `tool_calls` (array|null): Lista de llamadas a herramientas realizadas (si `use_tools=true`)
+  - `tool_name` (string): Nombre de la herramienta llamada
+  - `tool_args` (object): Argumentos pasados a la herramienta
+  - `call_id` (string): ID único de la llamada
+  - `timestamp` (string): Timestamp de la llamada
+- `tool_results` (array|null): Lista de resultados de ejecución de herramientas (si `use_tools=true`)
+  - `tool_name` (string): Nombre de la herramienta ejecutada
+  - `success` (bool): Indica si la ejecución fue exitosa
+  - `result` (object): Resultado de la ejecución de la herramienta
+  - `error` (string|null): Mensaje de error si falló
+  - `call_id` (string): ID de la llamada correspondiente
+  - `timestamp` (string): Timestamp de la ejecución
+- `agent_steps` (array|null): Pasos del agente durante el razonamiento (si `use_tools=true`)
+  - `step_number` (int): Número del paso
+  - `tool_name` (string): Herramienta usada en este paso
+  - `tool_args` (object): Argumentos de la herramienta
+  - `result` (object): Resultado de la herramienta
+  - `reasoning` (string|null): Razonamiento del agente
 
 **Nota**: Los campos `context_text` y `rag_sources` siempre se incluyen en la respuesta. Si no hay contexto disponible, `context_text` será una cadena vacía, `context_tokens` será 0, y `rag_sources` será un array vacío.
 
@@ -678,18 +706,19 @@ curl -X POST "http://localhost:8000/llm/memory/context" \
 
 #### 8.2 Obtener Historial de Conversación
 
-**GET** `/llm/memory/history`
+**GET** `/llm/memory/history/{session_id}`
 
 Recupera el historial completo de mensajes de una conversación con timestamps y metadata.
 
-**Query Parameters:**
+**Path Parameters:**
 - `session_id` (string, requerido): ID de la sesión
-- `limit` (int, opcional): Número máximo de mensajes a retornar (1-1000). Default: 100
-- `offset` (int, opcional): Número de mensajes a saltar para paginación. Default: 0
+
+**Query Parameters:**
+- `limit` (int, opcional): Número máximo de mensajes a retornar (1-1000). Default: 50
 
 **URL de ejemplo:**
 ```
-GET /llm/memory/history?session_id=mi-sesion-123&limit=50&offset=0
+GET /llm/memory/history/mi-sesion-123?limit=50
 ```
 
 **Respuesta:**
@@ -710,28 +739,27 @@ GET /llm/memory/history?session_id=mi-sesion-123&limit=50&offset=0
       "metadata": {"tokens_used": 150}
     }
   ],
-  "total_messages": 24,
-  "has_more": false
+  "total_count": 24
 }
 ```
 
 **Ejemplo con curl:**
 ```bash
-curl "http://localhost:8000/llm/memory/history?session_id=mi-sesion-123&limit=50"
+curl "http://localhost:8000/llm/memory/history/mi-sesion-123?limit=50"
 ```
 
 #### 8.3 Obtener Estadísticas de Memoria
 
-**GET** `/llm/memory/stats`
+**GET** `/llm/memory/stats/{session_id}`
 
 Recupera estadísticas detalladas sobre el uso de memoria para una sesión.
 
-**Query Parameters:**
+**Path Parameters:**
 - `session_id` (string, requerido): ID de la sesión
 
 **URL de ejemplo:**
 ```
-GET /llm/memory/stats?session_id=mi-sesion-123
+GET /llm/memory/stats/mi-sesion-123
 ```
 
 **Respuesta:**
@@ -755,7 +783,7 @@ GET /llm/memory/stats?session_id=mi-sesion-123
 
 **Ejemplo con curl:**
 ```bash
-curl "http://localhost:8000/llm/memory/stats?session_id=mi-sesion-123"
+curl "http://localhost:8000/llm/memory/stats/mi-sesion-123"
 ```
 
 #### 8.4 Búsqueda Semántica en Memoria
@@ -1046,7 +1074,6 @@ Opción nuclear: Elimina TODOS los datos del sistema de forma permanente e irrev
 - ✅ Todos los documentos RAG de la base de datos MySQL
 - ✅ Todos los vectores de Pinecone (todos los namespaces)
 - ✅ Todas las configuraciones de sesión
-- ✅ Todas las instancias MPC registradas
 
 **Request Body:**
 ```json
@@ -1317,7 +1344,6 @@ Elimina TODOS los datos del sistema de forma permanente. Esta operación es irre
 - Toda la memoria de largo plazo (semántica, episódica, perfil, procedimental)
 - Todos los documentos y vectores RAG
 - Todas las configuraciones de sesión
-- Todas las instancias MPC
 
 **Request Body:**
 ```json

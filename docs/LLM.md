@@ -282,12 +282,85 @@ response = llm.chat(messages)
 response = llm.chat(messages, temperature=0.3, max_tokens=200)
 ```
 
+#### `chat_with_tools()`
+
+```python
+async chat_with_tools(
+    messages: list[ChatMessage],
+    tools: list[Any],
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    max_iterations: int = 5,
+) -> tuple[str, list[AgentStep], list[ToolResult]]
+```
+
+Genera una respuesta de chat con capacidad de llamar herramientas MCP usando un patrón ReAct agent.
+
+**Parámetros:**
+- `messages`: Lista de objetos `ChatMessage` con el historial
+- `tools`: Lista de herramientas LangChain disponibles para el LLM
+- `temperature`: Temperatura de muestreo (0.0 - 1.0). Si no se proporciona, usa el valor de la instancia
+- `max_tokens`: Máximo de tokens a generar. Si no se proporciona, usa el valor de la instancia
+- `max_iterations`: Máximo número de iteraciones del agente (default: 5)
+
+**Returns:** Tupla de (respuesta_final, pasos_del_agente, resultados_de_herramientas)
+- `respuesta_final` (str): Respuesta final generada después de usar herramientas
+- `pasos_del_agente` (list[AgentStep]): Lista de pasos de razonamiento del agente
+- `resultados_de_herramientas` (list[ToolResult]): Lista de resultados de ejecución de herramientas
+
+**Raises:**
+- `ValueError`: Si los mensajes están vacíos o no hay herramientas disponibles
+- `RuntimeError`: Si la generación falla
+
+**Ejemplo:**
+```python
+from agentlab.mcp import get_registry
+
+# Obtener herramientas
+registry = get_registry()
+langchain_tools = registry.get_langchain_tools()
+
+# Chat con herramientas
+response, agent_steps, tool_results = await llm.chat_with_tools(
+    messages=messages,
+    tools=langchain_tools,
+    max_iterations=5
+)
+
+print(f"Respuesta: {response}")
+print(f"Herramientas usadas: {len(tool_results)}")
+for step in agent_steps:
+    print(f"Paso {step.step_number}: {step.tool_name}")
+```
+
+**Flujo del Agente:**
+1. El LLM recibe el historial de conversación con herramientas vinculadas
+2. Si el LLM decide usar una herramienta, genera un `tool_call`
+3. La herramienta se ejecuta a través del `MCPToolRegistry`
+4. El resultado se añade al historial como `ToolMessage`
+5. El LLM continúa hasta dar una respuesta final o alcanzar `max_iterations`
+
+**Notas:**
+- El método es asíncrono (usa `async`/`await`)
+- Las herramientas deben estar registradas en el `MCPToolRegistry`
+- Los resultados incluyen timestamps y metadata para tracking
+- El agente se detiene automáticamente si el LLM da una respuesta sin herramientas
+
 ## Testing
 
 Ejecutar tests unitarios:
 
 ```bash
 uv run pytest tests/unit/test_llm_interface.py -v
+
+# Tests específicos de herramientas
+uv run pytest tests/unit/test_llm_with_tools.py -v
+```
+
+Ejecutar tests de integración (requiere `OPENAI_API_KEY`):
+
+```bash
+uv run pytest tests/integration/test_chat_tools_integration.py -v
 ```
 
 ## Ejemplo Completo

@@ -3,11 +3,12 @@ Chat and LLM API routes.
 
 Endpoints for:
 - Generating text from LLM
-- Chat conversations with message history (with optional memory and RAG)
+- Chat conversations with message history (with optional memory, RAG, and MCP tools)
 """
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -17,7 +18,7 @@ from agentlab.core.llm_interface import LangChainLLM
 from agentlab.core.memory_service import IntegratedMemoryService
 from agentlab.core.rag_service import RAGServiceImpl
 from agentlab.core.context_builder import ContextBuilder
-from agentlab.models import ChatMessage
+from agentlab.models import ChatMessage, ToolCall, ToolResult, AgentStep
 
 router = APIRouter()
 
@@ -152,6 +153,9 @@ class ChatRequest(BaseModel):
     use_rag: bool = Field(
         False, description="Enable RAG document retrieval"
     )
+    use_tools: bool = Field(
+        False, description="Enable MCP tool calling for the agent"
+    )
     
     # Memory configuration
     memory_types: list[str] | None = Field(
@@ -166,6 +170,15 @@ class ChatRequest(BaseModel):
     )
     rag_top_k: int = Field(
         5, ge=1, le=20, description="Number of RAG documents to retrieve"
+    )
+    
+    # Tool configuration
+    tool_names: list[str] | None = Field(
+        None,
+        description="Specific MCP tool names to enable (empty = all registered tools)",
+    )
+    max_tool_iterations: int = Field(
+        5, ge=1, le=20, description="Maximum agent iterations to prevent infinite loops"
     )
     
     # Context configuration
@@ -186,6 +199,37 @@ class RAGSource(BaseModel):
     namespace: str = Field(default="", description="Pinecone namespace")
     chunk_index: int | None = Field(None, description="Chunk index in document")
 
+
+class ToolCallInfo(BaseModel):
+    """Information about a tool call made by the agent."""
+
+    id: str = Field(..., description="Unique tool call identifier")
+    name: str = Field(..., description="Tool name")
+    args: dict[str, Any] = Field(..., description="Tool arguments")
+    timestamp: str | None = Field(None, description="ISO timestamp of call")
+
+
+class ToolResultInfo(BaseModel):
+    """Result from a tool execution."""
+
+    tool_call_id: str = Field(..., description="ID of the tool call")
+    tool_name: str = Field(..., description="Name of the tool")
+    success: bool = Field(..., description="Whether execution succeeded")
+    result: dict[str, Any] = Field(..., description="Tool result data")
+    error: str | None = Field(None, description="Error message if failed")
+    timestamp: str | None = Field(None, description="ISO timestamp of result")
+
+
+class AgentStepInfo(BaseModel):
+    """Information about a single agent reasoning step."""
+
+    step_number: int = Field(..., description="Step sequence number")
+    action: str = Field(..., description="Action type: tool_call or final_answer")
+    tool_call: ToolCallInfo | None = Field(None, description="Tool call if action=tool_call")
+    tool_result: ToolResultInfo | None = Field(None, description="Tool result if action=tool_call")
+    reasoning: str | None = Field(None, description="Agent reasoning text")
+
+
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
 
@@ -193,7 +237,7 @@ class ChatResponse(BaseModel):
     session_id: str
     context_text: str = Field(
         default="",
-        description="Complete context sent to LLM (memory + RAG)"
+        description="Complete context sent to LLM (memory + RAG + tool results)"
     )
     context_tokens: int = Field(
         default=0,
@@ -204,6 +248,19 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="RAG documents used with similarity scores"
     )
+    tool_calls: list[ToolCallInfo] = Field(
+        default_factory=list,
+        description="Tool calls made during agent execution"
+    )
+    agent_steps: list[AgentStepInfo] = Field(
+        default_factory=list,
+        description="Agent reasoning steps with tool calls and results"
+    )
+    tools_used: bool = Field(
+        default=False,
+        description="Whether tools were enabled and used"
+    )
+
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -376,12 +433,112 @@ async def chat(request: ChatRequest):
             )
             final_messages.insert(0, system_msg)
         
-        # Generate response
-        response_text = llm.chat(
-            final_messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens
-        )
+        # Generate response - with or without tools
+        if request.use_tools:
+            # Use tool-enabled agent
+            response_text, agent_steps, tool_results = await llm.chat_with_tools(
+                final_messages,
+                tool_names=request.tool_names,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                max_iterations=request.max_tool_iterations
+            )
+            
+            # Convert agent steps to response format
+            agent_steps_info: list[AgentStepInfo] = []
+            for step in agent_steps:
+                tool_call_info = None
+                tool_result_info = None
+                
+                if step.tool_call:
+                    tool_call_info = ToolCallInfo(
+                        id=step.tool_call.id,
+                        name=step.tool_call.name,
+                        args=step.tool_call.args,
+                        timestamp=step.tool_call.timestamp.isoformat() if step.tool_call.timestamp else None
+                    )
+                
+                if step.tool_result:
+                    tool_result_info = ToolResultInfo(
+                        tool_call_id=step.tool_result.tool_call_id,
+                        tool_name=step.tool_result.tool_name,
+                        success=step.tool_result.success,
+                        result=step.tool_result.result,
+                        error=step.tool_result.error,
+                        timestamp=step.tool_result.timestamp.isoformat() if step.tool_result.timestamp else None
+                    )
+                
+                agent_steps_info.append(AgentStepInfo(
+                    step_number=step.step_number,
+                    action=step.action,
+                    tool_call=tool_call_info,
+                    tool_result=tool_result_info,
+                    reasoning=step.reasoning
+                ))
+            
+            # Extract tool calls for response
+            tool_calls_info: list[ToolCallInfo] = []
+            for step in agent_steps:
+                if step.tool_call:
+                    tool_calls_info.append(ToolCallInfo(
+                        id=step.tool_call.id,
+                        name=step.tool_call.name,
+                        args=step.tool_call.args,
+                        timestamp=step.tool_call.timestamp.isoformat() if step.tool_call.timestamp else None
+                    ))
+            
+            # Store tool calls in memory with metadata
+            if memory_service:
+                for step in agent_steps:
+                    if step.tool_call:
+                        # Store tool call message
+                        tool_call_msg = ChatMessage(
+                            role="assistant",
+                            content=f"[Tool Call: {step.tool_call.name}]",
+                            timestamp=datetime.now(),
+                            metadata={
+                                "is_tool_call": True,
+                                "tool_name": step.tool_call.name,
+                                "tool_args": step.tool_call.args
+                            }
+                        )
+                        memory_service.add_message(session_id, tool_call_msg)
+                    
+                    if step.tool_result:
+                        # Store tool result message
+                        tool_result_msg = ChatMessage(
+                            role="system",
+                            content=f"[Tool Result: {step.tool_result.tool_name}]",
+                            timestamp=datetime.now(),
+                            metadata={
+                                "is_tool_call": True,
+                                "tool_name": step.tool_result.tool_name,
+                                "tool_result": step.tool_result.result,
+                                "tool_success": step.tool_result.success
+                            }
+                        )
+                        memory_service.add_message(session_id, tool_result_msg)
+            
+            # Update context with tool results if any
+            if tool_results:
+                combined_context_with_tools = context_builder.build_context(
+                    memory_context=memory_context,
+                    rag_result=rag_result,
+                    tool_results=tool_results,
+                    prioritize=request.context_priority
+                )
+                context_text_with_tools = context_builder.format_for_prompt(combined_context_with_tools)
+                context_tokens = context_builder.count_tokens(context_text_with_tools)
+                context_text = context_text_with_tools
+        else:
+            # Standard chat without tools
+            response_text = llm.chat(
+                final_messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens
+            )
+            agent_steps_info = []
+            tool_calls_info = []
         
         # Store assistant response in memory
         if memory_service:
@@ -397,7 +554,10 @@ async def chat(request: ChatRequest):
             session_id=session_id,
             context_text=context_text,
             context_tokens=context_tokens,
-            rag_sources=rag_sources_list
+            rag_sources=rag_sources_list,
+            tool_calls=tool_calls_info,
+            agent_steps=agent_steps_info,
+            tools_used=request.use_tools and len(tool_calls_info) > 0
         )
     
     except HTTPException:

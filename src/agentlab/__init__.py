@@ -3,11 +3,12 @@ AgentLab - LLM, MCP & RAG Learning Platform.
 
 This package provides a modular architecture for experimenting with:
 - Large Language Models (LLMs) via LangChain
-- Model Context Protocol (MCP) servers and clients (Anthropic's specification)
+- Model Context Protocol (MCP) tools for LLM function calling
 - Retrieval Augmented Generation (RAG) systems
 
 The application is organized into:
 - core: High-level business logic and services
+- mcp: MCP tools infrastructure (registry, base classes)
 - agents: Low-level implementations and processors
 - api: FastAPI REST API
 - database: Data persistence layer
@@ -16,7 +17,11 @@ Public API:
     Core Services:
         - LangChainLLM: LLM interface using LangChain
         - RAGService: Retrieval Augmented Generation service
-        - MPCManager: Model Context Protocol manager
+    
+    MCP Tools:
+        - MCPToolRegistry: Central registry for MCP tools
+        - MCPToolBase: Base class for creating tools
+        - get_registry: Get global tool registry instance
     
     Models:
         - ChatMessage: Chat message data structure
@@ -25,16 +30,19 @@ Public API:
     
     Agents:
         - RAGProcessor: Document processing and embeddings
-        - MPCClientBase: Base class for MCP clients
-        - MPCServerBase: Base class for MCP servers
 
 Example:
     >>> from agentlab import LangChainLLM, ChatMessage
-    >>> from datetime import datetime
+    >>> from agentlab.mcp import get_registry
     >>> 
+    >>> # Use LLM
     >>> llm = LangChainLLM(model_name="gpt-3.5-turbo")
     >>> response = llm.generate("Explain machine learning", temperature=0.7)
-    >>> print(response)
+    >>> 
+    >>> # Use MCP tools
+    >>> registry = get_registry()
+    >>> tools = registry.get_langchain_tools()
+    >>> print(registry.list_tools())
 """
 
 __version__ = "0.1.0"
