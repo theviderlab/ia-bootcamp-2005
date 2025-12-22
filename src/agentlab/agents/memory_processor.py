@@ -9,13 +9,18 @@ import hashlib
 import json
 from collections import Counter
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pinecone import Pinecone
 
 from agentlab.config.memory_config import MemoryConfig
-from agentlab.database.crud import get_chat_history
+from agentlab.database.crud import (
+    get_chat_history,
+    get_user_profile as db_get_user_profile,
+    create_or_update_user_profile as db_create_or_update_user_profile,
+)
 from agentlab.models import ChatMessage
 
 
@@ -68,7 +73,123 @@ class LongTermMemoryProcessor:
             )
         else:
             self.llm = None
+        
+        # Load profile schema
+        self.profile_schema = self._load_profile_schema()
+    
+    def _load_profile_schema(self) -> dict[str, Any]:
+        """
+        Load profile schema from configuration file.
 
+        Returns:
+            Profile schema dictionary.
+        """
+        schema_path = Path(__file__).parent.parent.parent / "data" / "configs" / "profile_schema.json"
+        
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            # Return minimal schema if file not found
+            return {
+                "name": "User Profile",
+                "description": "Basic user profile",
+                "parameters": {"type": "object", "properties": {}}
+            }
+
+    def _build_search_query_from_messages(
+        self, messages: list[ChatMessage], max_messages: int = 3
+    ) -> str:
+        """
+        Build search query from recent conversation messages.
+        
+        Prioritizes user messages to capture current intent.
+        
+        Args:
+            messages: List of conversation messages.
+            max_messages: Maximum number of messages to include (default: 3).
+        
+        Returns:
+            Query string for semantic search.
+        """
+        if not messages:
+            return ""
+        
+        # Take last max_messages, prioritizing user messages
+        recent_messages = messages[-max_messages * 2:]  # Get more to filter
+        
+        # Prioritize user messages
+        user_messages = [msg for msg in recent_messages if msg.role == "user"]
+        
+        # If we have enough user messages, use only those
+        if len(user_messages) >= max_messages:
+            query_messages = user_messages[-max_messages:]
+        else:
+            # Use all user messages + some assistant messages
+            query_messages = recent_messages[-max_messages:]
+        
+        # Build query text
+        query_parts = [msg.content for msg in query_messages]
+        query = " ".join(query_parts)
+        
+        # Truncate if too long (max ~500 chars for embedding)
+        if len(query) > 500:
+            query = query[:500]
+        
+        return query
+    
+    def search_relevant_conversations(
+        self, messages: list[ChatMessage], top_k: int | None = None
+    ) -> list[str]:
+        """
+        Search for relevant past conversations using semantic similarity.
+        
+        Uses RAG-like approach to find similar conversations from vector database.
+        Returns conversation texts as simple strings for compatibility with
+        MemoryContext.semantic_facts format.
+        
+        Args:
+            messages: Current conversation messages to build search query.
+            top_k: Number of results to return. Uses config default if None.
+        
+        Returns:
+            List of relevant conversation texts from past sessions.
+        """
+        if not self.embeddings or not self.index:
+            return []
+        
+        if not messages:
+            return []
+        
+        # Build search query from recent messages
+        query = self._build_search_query_from_messages(messages)
+        
+        if not query:
+            return []
+        
+        # Use config default if top_k not specified
+        if top_k is None:
+            top_k = self.config.semantic_search_top_k
+        
+        # Search semantic memory (no session_id filter to search all past conversations)
+        results = self.search_semantic(
+            query=query,
+            session_id=None,  # Search across all sessions
+            top_k=top_k
+        )
+        
+        # Extract text field and format as list[str]
+        conversation_texts = []
+        for result in results:
+            text = result.get("text", "")
+            if text:
+                # Optionally include score in format for debugging
+                score = result.get("score", 0.0)
+                # For now, just return the text without score
+                conversation_texts.append(text)
+        
+        return conversation_texts
+    
     def extract_semantic_facts(
         self, session_id: str, messages: list[ChatMessage]
     ) -> list[str]:
@@ -115,23 +236,143 @@ class LongTermMemoryProcessor:
 
         return []
 
-    def get_user_profile(self, session_id: str) -> dict[str, Any]:
+    def get_user_profile(self, session_id: str | None = None) -> dict[str, Any]:
         """
-        Get aggregated user profile from conversation history.
+        Get or extract user profile from conversation history.
 
-        Extracts user preferences, characteristics, and patterns.
+        Loads existing profile from database and optionally updates it
+        with new information from recent messages.
 
         Args:
-            session_id: Session identifier.
+            session_id: Session identifier (used to get recent messages for updates).
 
         Returns:
             Dictionary with profile attributes.
         """
-        messages_data = get_chat_history(session_id, limit=100)
+        # Load existing profile from database
+        stored_profile = db_get_user_profile()
+        
+        if stored_profile:
+            # Return existing profile data
+            return stored_profile["profile_data"]
+        
+        # No profile exists - return empty dict
+        # Profile will be created when extract_and_store_profile is called
+        return {}
 
+    def extract_profile_from_messages(
+        self, messages: list[ChatMessage], existing_profile: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """
+        Extract user profile from messages using LLM.
+
+        Args:
+            messages: List of chat messages to analyze.
+            existing_profile: Existing profile to update (patch mode).
+
+        Returns:
+            Extracted profile dictionary.
+        """
+        if not self.llm:
+            return existing_profile or {}
+        
+        # Build conversation text (last 50 messages to keep token count manageable)
+        conversation = "\n".join(
+            [f"{msg.role}: {msg.content}" for msg in messages[-50:]]
+        )
+        
+        # Build prompt with schema
+        schema_desc = self.profile_schema.get("description", "")
+        schema_props = json.dumps(
+            self.profile_schema.get("parameters", {}).get("properties", {}),
+            indent=2
+        )
+        instructions = self.profile_schema.get("instructions", "")
+        
+        existing_context = ""
+        if existing_profile:
+            existing_context = f"\n\nEXISTING PROFILE (update/patch this):\n{json.dumps(existing_profile, indent=2)}"
+        
+        prompt = f"""Extract user profile information from this conversation.
+
+{schema_desc}
+
+SCHEMA:
+{schema_props}
+
+INSTRUCTIONS:
+{instructions}
+
+You can add additional relevant fields beyond the base schema if you discover important information about the user.
+{existing_context}
+
+CONVERSATION:
+{conversation}
+
+Return ONLY a valid JSON object with the profile data. Do not include any explanation or markdown formatting:"""
+        
+        try:
+            response = self.llm.invoke(prompt)
+            content = response.content if hasattr(response, "content") else ""
+            
+            # Clean up response - remove markdown code blocks if present
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]  # Remove ```json
+            elif content.startswith("```"):
+                content = content[3:]  # Remove ```
+            if content.endswith("```"):
+                content = content[:-3]  # Remove trailing ```
+            content = content.strip()
+            
+            # Parse JSON
+            if content:
+                profile = json.loads(content)
+                
+                # Merge with existing profile if in patch mode
+                if existing_profile:
+                    merged = existing_profile.copy()
+                    merged.update(profile)
+                    return merged
+                
+                return profile if isinstance(profile, dict) else {}
+        except Exception as e:
+            # If extraction fails, return existing profile or empty dict
+            print(f"Profile extraction error: {e}")
+            return existing_profile or {}
+        
+        return existing_profile or {}
+    
+    def extract_and_store_profile(
+        self, session_id: str, incremental: bool = True
+    ) -> dict[str, Any]:
+        """
+        Extract profile from conversation and store in database.
+
+        Args:
+            session_id: Session identifier to get messages from.
+            incremental: If True, only process new messages since last update.
+
+        Returns:
+            Updated profile dictionary.
+        """
+        # Load existing profile
+        stored_profile = db_get_user_profile()
+        existing_profile = stored_profile["profile_data"] if stored_profile else None
+        last_message_id = stored_profile["last_updated_message_id"] if stored_profile else None
+        
+        # Get messages
+        if incremental and last_message_id:
+            # TODO: Implement fetching only new messages after last_message_id
+            # For now, get recent messages
+            messages_data = get_chat_history(session_id, limit=50)
+        else:
+            # Full extraction
+            messages_data = get_chat_history(session_id, limit=100)
+        
         if not messages_data:
-            return {}
-
+            return existing_profile or {}
+        
         # Convert to ChatMessage objects
         messages = [
             ChatMessage(
@@ -142,32 +383,88 @@ class LongTermMemoryProcessor:
             )
             for row in messages_data
         ]
+        
+        # Extract profile using LLM
+        new_profile = self.extract_profile_from_messages(messages, existing_profile)
+        
+        # Store in database
+        if new_profile:
+            last_msg_id = messages_data[-1]["id"] if messages_data else None
+            db_create_or_update_user_profile(new_profile, last_msg_id)
+        
+        return new_profile
+    
+    def extract_and_store_semantic(
+        self, session_id: str, limit: int = 100
+    ) -> dict[str, Any]:
+        """
+        Extract semantic embeddings from conversation and store in vector database.
 
-        profile = {
+        Creates embeddings directly from chat history without LLM extraction.
+        Stores conversation with timestamps in metadata.
+
+        Args:
+            session_id: Session identifier to get messages from.
+            limit: Maximum number of messages to process.
+
+        Returns:
+            Dictionary with extraction status and count.
+
+        Raises:
+            ValueError: If semantic storage is not configured.
+        """
+        if self.config.semantic_storage == "mysql":
+            raise ValueError("Semantic storage requires Pinecone configuration")
+        
+        if not self.embeddings or not self.index:
+            raise ValueError("Embeddings and vector store not initialized")
+        
+        # Get messages from database
+        messages_data = get_chat_history(session_id, limit=limit)
+        
+        if not messages_data:
+            return {"status": "no_messages", "count": 0}
+        
+        # Build conversation text with timestamps
+        conversation_parts = []
+        for row in messages_data:
+            timestamp = row["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+            role = row["role"]
+            content = row["content"]
+            conversation_parts.append(f"[{timestamp}] {role}: {content}")
+        
+        conversation_text = "\n".join(conversation_parts)
+        
+        # Get timestamp range for metadata
+        first_timestamp = messages_data[0]["created_at"]
+        last_timestamp = messages_data[-1]["created_at"]
+        
+        # Prepare metadata
+        metadata = {
             "session_id": session_id,
-            "total_messages": len(messages),
-            "user_messages": sum(1 for m in messages if m.role == "user"),
-            "first_interaction": messages[0].timestamp if messages else None,
-            "last_interaction": messages[-1].timestamp if messages else None,
+            "message_count": len(messages_data),
+            "first_timestamp": first_timestamp.isoformat(),
+            "last_timestamp": last_timestamp.isoformat(),
+            "extracted_at": datetime.now().isoformat(),
         }
-
-        # Extract topics using keyword frequency (simple approach)
-        user_messages = [m.content for m in messages if m.role == "user"]
-        words = " ".join(user_messages).lower().split()
         
-        # Filter common words and get top keywords
-        common_words = {"the", "a", "an", "and", "or", "but", "in", "on"}
-        keywords = [w for w in words if len(w) > 3 and w not in common_words]
+        # Store in vector database
+        self.store_semantic_embedding(
+            session_id=session_id,
+            text=conversation_text,
+            metadata=metadata
+        )
         
-        if keywords:
-            word_counts = Counter(keywords)
-            profile["top_topics"] = [
-                {"word": word, "count": count}
-                for word, count in word_counts.most_common(10)
-            ]
-
-        return profile
-
+        return {
+            "status": "success",
+            "count": 1,
+            "message_count": len(messages_data),
+            "timestamp_range": {
+                "start": first_timestamp.isoformat(),
+                "end": last_timestamp.isoformat()
+            }
+        }
+    
     def get_episodic_summary(self, session_id: str) -> str | None:
         """
         Get temporal summary of conversation episodes.

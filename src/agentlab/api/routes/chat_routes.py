@@ -18,6 +18,11 @@ from agentlab.core.llm_interface import LangChainLLM
 from agentlab.core.memory_service import IntegratedMemoryService
 from agentlab.core.rag_service import RAGServiceImpl
 from agentlab.core.context_builder import ContextBuilder
+from agentlab.database.crud import (
+    get_session_config,
+    get_latest_session_id,
+    create_or_update_session_config,
+)
 from agentlab.models import ChatMessage, ToolCall, ToolResult, AgentStep
 
 router = APIRouter()
@@ -244,6 +249,14 @@ class ChatResponse(BaseModel):
         ge=0,
         description="Accurate token count of context using tiktoken"
     )
+    token_breakdown: dict[str, int] = Field(
+        default_factory=dict,
+        description="Token count breakdown by component (short_term, semantic, episodic, profile, procedural, rag, tools)"
+    )
+    max_context_tokens: int = Field(
+        default=4000,
+        description="Maximum context tokens allowed"
+    )
     rag_sources: list[RAGSource] = Field(
         default_factory=list,
         description="RAG documents used with similarity scores"
@@ -336,8 +349,40 @@ async def chat(request: ChatRequest):
                 timestamp=datetime.now()
             ))
         
-        # Generate or use provided session ID
-        session_id = request.session_id or str(uuid4())
+        # Determine session ID: use provided, then latest, then create new
+        session_id = request.session_id
+        if not session_id:
+            try:
+                session_id = get_latest_session_id()
+                if session_id:
+                    print(f"📝 Using latest session: {session_id}")
+            except Exception as e:
+                print(f"⚠️  Could not get latest session: {e}")
+        
+        if not session_id:
+            # Create new session with default configuration
+            session_id = str(uuid4())
+            try:
+                create_or_update_session_config(
+                    session_id=session_id,
+                    memory_config={
+                        "enabled": False,
+                        "short_term": {"enabled": False},
+                        "semantic": {"enabled": False},
+                        "episodic": {"enabled": False},
+                        "profile": {"enabled": False},
+                        "procedural": {"enabled": False}
+                    },
+                    rag_config={
+                        "enabled": False,
+                        "top_k": 5,
+                        "namespaces": []
+                    },
+                    metadata={"created_by": "chat_api"}
+                )
+                print(f"✨ Created new session: {session_id}")
+            except Exception as e:
+                print(f"⚠️  Could not create session config: {e}")
         
         # Get services
         llm = get_llm()
@@ -349,16 +394,30 @@ async def chat(request: ChatRequest):
             last_msg = chat_messages[-1]
             if last_msg.role == "user":
                 memory_service.add_message(session_id, last_msg)
-        
-        # Retrieve memory context
+
+        # Retrieve memory context with session configuration
         memory_context = None
         if memory_service:
             try:
-                memory_context = memory_service.get_context(session_id)
+                # Get session configuration to respect memory toggles
+                memory_config = None
+                try:
+                    session_config = get_session_config(session_id)
+                    if session_config:
+                        memory_config = session_config.get("memory_config")
+                except Exception as e:
+                    print(f"⚠️  Could not load session config: {e}")
+                
+                print(memory_config)
+                # Get context with configuration filtering
+                memory_context = memory_service.get_context(
+                    session_id=session_id,
+                    memory_config=memory_config
+                )
             except Exception as e:
                 # Log warning but continue without memory
                 print(f"⚠️  Memory retrieval failed: {e}")
-        
+
         # Retrieve RAG context
         rag_result = None
         if rag_service and chat_messages:
@@ -549,11 +608,14 @@ async def chat(request: ChatRequest):
             )
             memory_service.add_message(session_id, assistant_msg)
         
+        print(context_text)
         return ChatResponse(
             response=response_text,
             session_id=session_id,
             context_text=context_text,
             context_tokens=context_tokens,
+            token_breakdown=combined_context.token_breakdown or {},
+            max_context_tokens=request.max_context_tokens,
             rag_sources=rag_sources_list,
             tool_calls=tool_calls_info,
             agent_steps=agent_steps_info,

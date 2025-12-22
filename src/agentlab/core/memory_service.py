@@ -92,45 +92,98 @@ class IntegratedMemoryService:
         return self.short_term.get_messages(session_id, limit)
 
     def get_context(
-        self, session_id: str, max_tokens: int | None = None
+        self,
+        session_id: str,
+        max_tokens: int | None = None,
+        memory_config: dict | None = None,
     ) -> MemoryContext:
         """
         Get enriched context from conversation memory.
 
         Combines short-term buffer with long-term semantic facts,
         user profile, episodic summary, and procedural patterns.
+        Respects session-specific memory configuration.
 
         Args:
             session_id: Session identifier.
             max_tokens: Maximum tokens to include.
+            memory_config: Session memory configuration dict with toggles:
+                - enable_short_term: bool (default True)
+                - enable_semantic: bool (default True)
+                - enable_episodic: bool (default True)
+                - enable_profile: bool (default True)
+                - enable_procedural: bool (default True)
+                If None, uses all available memory types.
 
         Returns:
-            Complete memory context with all memory types.
+            Complete memory context filtered by configuration.
         """
-        # Get base context from short-term
-        context = self.short_term.get_context(session_id, max_tokens)
+        # Parse memory configuration
+        enable_short_term = True
+        enable_semantic = True
+        enable_episodic = True
+        enable_profile = True
+        enable_procedural = True
         
-        # Enrich with long-term memory if enabled
+        if memory_config:
+            enable_short_term = memory_config.get("enable_short_term", True)
+            enable_semantic = memory_config.get("enable_semantic", True)
+            enable_episodic = memory_config.get("enable_episodic", True)
+            enable_profile = memory_config.get("enable_profile", True)
+            enable_procedural = memory_config.get("enable_procedural", True)
+        
+        # Get base context from short-term (only if enabled)
+        if enable_short_term:
+            context = self.short_term.get_context(session_id, max_tokens)
+        else:
+            # Empty context if short-term disabled
+            from agentlab.models import MemoryContext
+            stats = self.short_term.get_stats(session_id)
+            context = MemoryContext(
+                session_id=session_id,
+                short_term_context="",
+                semantic_facts=[],
+                user_profile={},
+                episodic_summary=None,
+                procedural_patterns=None,
+                total_messages=stats.message_count,
+                metadata={"memory_type": "disabled"},
+            )
+        
+        # Enrich with long-term memory if enabled AND configured
         if self.long_term:
-            messages = self.get_messages(session_id)
+            messages = self.get_messages(session_id) if enable_short_term else []
             
-            # Extract semantic facts
-            context.semantic_facts = self.long_term.extract_semantic_facts(
-                session_id, messages
-            )
+            # Search for relevant past conversations using semantic similarity (only if enabled)
+            if enable_semantic:
+                context.semantic_facts = self.long_term.search_relevant_conversations(
+                    messages=messages,
+                    top_k=None  # Uses config default
+                )
+            else:
+                context.semantic_facts = []
             
-            # Get user profile
-            context.user_profile = self.long_term.get_user_profile(session_id)
+            # Get user profile (only if enabled)
+            if enable_profile:
+                context.user_profile = self.long_term.get_user_profile()
+            else:
+                context.user_profile = {}
             
-            # Get episodic summary
-            context.episodic_summary = self.long_term.get_episodic_summary(
-                session_id
-            )
+            # Get episodic summary (only if enabled)
+            if enable_episodic:
+                context.episodic_summary = self.long_term.get_episodic_summary(
+                    session_id
+                )
+            else:
+                context.episodic_summary = None
             
-            # Get procedural patterns
-            context.procedural_patterns = (
-                self.long_term.get_procedural_patterns(session_id)
-            )
+            # Get procedural patterns (only if enabled)
+            if enable_procedural:
+                context.procedural_patterns = (
+                    self.long_term.get_procedural_patterns(session_id)
+                )
+            else:
+                context.procedural_patterns = None
 
         return context
 
@@ -161,7 +214,7 @@ class IntegratedMemoryService:
             semantic_facts = self.long_term.extract_semantic_facts(
                 session_id, messages
             )
-            profile = self.long_term.get_user_profile(session_id)
+            profile = self.long_term.get_user_profile()
             
             stats.semantic_facts_count = len(semantic_facts)
             stats.profile_attributes_count = len(profile)

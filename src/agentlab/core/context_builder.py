@@ -41,6 +41,7 @@ class CombinedContext:
     
     # Metadata
     total_tokens_estimated: int = 0
+    token_breakdown: dict[str, int] | None = None
     truncated: bool = False
     truncation_strategy: str | None = None
     warnings: list[str] | None = None
@@ -88,7 +89,7 @@ class ContextBuilder:
         """
         warnings = []
         
-        # Extract memory components
+        # Extract memory components (only non-empty values)
         short_term = ""
         semantic = None
         profile = None
@@ -96,11 +97,23 @@ class ContextBuilder:
         procedural = None
         
         if memory_context:
+            # Only include if non-empty (respects disabled features)
             short_term = memory_context.short_term_context or ""
-            semantic = memory_context.semantic_facts if memory_context.semantic_facts else None
-            profile = memory_context.user_profile if memory_context.user_profile else None
+            
+            # Only include semantic facts if present and not empty
+            if memory_context.semantic_facts and len(memory_context.semantic_facts) > 0:
+                semantic = memory_context.semantic_facts
+            
+            # Only include profile if present and not empty
+            if memory_context.user_profile and len(memory_context.user_profile) > 0:
+                profile = memory_context.user_profile
+            
+            # Only include episodic summary if present and not empty
             episodic = memory_context.episodic_summary or ""
-            procedural = memory_context.procedural_patterns if memory_context.procedural_patterns else None
+            
+            # Only include procedural patterns if present and not empty
+            if memory_context.procedural_patterns and len(memory_context.procedural_patterns) > 0:
+                procedural = memory_context.procedural_patterns
         
         # Extract RAG components
         rag_docs = None
@@ -112,12 +125,12 @@ class ContextBuilder:
             if rag_docs:
                 rag_text = self._format_rag_sources(rag_docs)
         
-        # Estimate tokens (rough: 4 chars = 1 token)
+        # Estimate tokens with breakdown
         tool_results_text = ""
         if tool_results:
             tool_results_text = self._format_tool_results(tool_results)
         
-        estimated_tokens = self._estimate_tokens(
+        estimated_tokens, token_breakdown = self._estimate_tokens(
             short_term, semantic, profile, episodic, procedural, rag_text, tool_results_text
         )
         
@@ -148,6 +161,7 @@ class ContextBuilder:
             rag_context=rag_text,
             tool_results=tool_results,
             total_tokens_estimated=estimated_tokens,
+            token_breakdown=token_breakdown,
             truncated=truncated,
             truncation_strategy=truncation_strategy,
             warnings=warnings if warnings else None,
@@ -301,9 +315,9 @@ class ContextBuilder:
         procedural: list[str] | None,
         rag_text: str,
         tool_results_text: str = "",
-    ) -> int:
+    ) -> tuple[int, dict[str, int]]:
         """
-        Estimate total tokens in context using tiktoken.
+        Estimate total tokens in context using tiktoken with breakdown.
         
         Args:
             short_term: Short-term history text.
@@ -315,25 +329,30 @@ class ContextBuilder:
             tool_results_text: Formatted tool results text.
         
         Returns:
-            Accurate token count using tiktoken.
+            Tuple of (total_tokens, breakdown_dict) with accurate counts.
         """
-        total_tokens = 0
-        
-        total_tokens += self.count_tokens(short_term)
-        total_tokens += self.count_tokens(episodic)
-        total_tokens += self.count_tokens(rag_text)
-        total_tokens += self.count_tokens(tool_results_text)
+        breakdown = {
+            "short_term": self.count_tokens(short_term),
+            "episodic": self.count_tokens(episodic),
+            "rag": self.count_tokens(rag_text),
+            "tools": self.count_tokens(tool_results_text),
+            "semantic": 0,
+            "profile": 0,
+            "procedural": 0,
+        }
         
         if semantic:
-            total_tokens += sum(self.count_tokens(fact) for fact in semantic)
+            breakdown["semantic"] = sum(self.count_tokens(fact) for fact in semantic)
         
         if profile:
             profile_text = " ".join(
                 f"{k}: {v}" for k, v in profile.items()
             )
-            total_tokens += self.count_tokens(profile_text)
+            breakdown["profile"] = self.count_tokens(profile_text)
         
         if procedural:
-            total_tokens += sum(self.count_tokens(pattern) for pattern in procedural)
+            breakdown["procedural"] = sum(self.count_tokens(pattern) for pattern in procedural)
         
-        return total_tokens
+        total_tokens = sum(breakdown.values())
+        
+        return total_tokens, breakdown

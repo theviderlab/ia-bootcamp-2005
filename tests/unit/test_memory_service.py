@@ -451,3 +451,95 @@ class TestIntegratedMemoryService:
         )
         assert len(results) == 1
         assert results[0]["fact"] == "User likes Python"
+
+    @patch("agentlab.core.memory_service.LongTermMemoryProcessor")
+    @patch("agentlab.core.memory_service.ShortTermMemoryService")
+    def test_get_context_respects_session_config(
+        self, mock_short_term_class, mock_long_term_class
+    ):
+        """Test that get_context respects session memory configuration."""
+        # Setup short-term mock
+        mock_short_term = Mock()
+        mock_short_term.get_context.return_value = MemoryContext(
+            session_id="test-session",
+            short_term_context="Recent chat",
+            semantic_facts=[],
+            user_profile={},
+            total_messages=1,
+        )
+        mock_short_term.get_stats.return_value = Mock(message_count=1)
+        mock_short_term.get_messages.return_value = []
+        mock_short_term_class.return_value = mock_short_term
+        
+        # Setup long-term mock
+        mock_long_term = Mock()
+        mock_long_term.extract_semantic_facts.return_value = ["Fact 1"]
+        mock_long_term.get_user_profile.return_value = {"name": "Test"}
+        mock_long_term.get_episodic_summary.return_value = "Summary"
+        mock_long_term.get_procedural_patterns.return_value = ["Pattern 1"]
+        mock_long_term_class.return_value = mock_long_term
+        
+        # Create service with long-term enabled
+        config = MemoryConfig(
+            db_host="localhost",
+            db_port=3306,
+            db_user="test",
+            db_password="test",
+            db_name="test",
+            enable_long_term=True,
+        )
+        service = IntegratedMemoryService(config=config)
+        
+        # Test 1: All memory disabled
+        memory_config = {
+            "enable_short_term": False,
+            "enable_semantic": False,
+            "enable_episodic": False,
+            "enable_profile": False,
+            "enable_procedural": False,
+        }
+        
+        context = service.get_context("test-session", memory_config=memory_config)
+        
+        # Verify all memory is disabled
+        assert context.short_term_context == ""
+        assert context.semantic_facts == []
+        assert context.user_profile == {}
+        assert context.episodic_summary is None
+        assert context.procedural_patterns is None
+        
+        # Test 2: Only semantic enabled
+        memory_config = {
+            "enable_short_term": False,
+            "enable_semantic": True,
+            "enable_episodic": False,
+            "enable_profile": False,
+            "enable_procedural": False,
+        }
+        
+        context = service.get_context("test-session", memory_config=memory_config)
+        
+        # Verify only semantic is populated
+        assert context.short_term_context == ""
+        assert context.semantic_facts == ["Fact 1"]
+        assert context.user_profile == {}
+        assert context.episodic_summary is None
+        assert context.procedural_patterns is None
+        
+        # Test 3: Only short-term enabled (default behavior with long-term disabled)
+        memory_config = {
+            "enable_short_term": True,
+            "enable_semantic": False,
+            "enable_episodic": False,
+            "enable_profile": False,
+            "enable_procedural": False,
+        }
+        
+        context = service.get_context("test-session", memory_config=memory_config)
+        
+        # Verify only short-term is populated
+        assert context.short_term_context == "Recent chat"
+        assert context.semantic_facts == []
+        assert context.user_profile == {}
+        assert context.episodic_summary is None
+        assert context.procedural_patterns is None

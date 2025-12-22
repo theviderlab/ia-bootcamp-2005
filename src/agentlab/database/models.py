@@ -74,11 +74,24 @@ CREATE TABLE IF NOT EXISTS session_configs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 """
 
+CREATE_USER_PROFILES_TABLE = """
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    profile_data JSON NOT NULL,
+    version INT DEFAULT 1,
+    last_updated_message_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+"""
+
 ALL_TABLES = [
     CREATE_KNOWLEDGE_BASE_TABLE,
     CREATE_CHAT_HISTORY_TABLE,
     CREATE_MPC_INSTANCES_TABLE,
     CREATE_SESSION_CONFIGS_TABLE,
+    CREATE_USER_PROFILES_TABLE,
 ]
 
 
@@ -134,5 +147,17 @@ class SessionConfigRow:
     memory_config: dict
     rag_config: dict
     metadata: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class UserProfileRow:
+    """Represents a row in the user_profiles table."""
+
+    id: int
+    profile_data: dict
+    version: int
+    last_updated_message_id: int | None
     created_at: datetime
     updated_at: datetime

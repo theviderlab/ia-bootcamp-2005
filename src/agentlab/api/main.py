@@ -46,17 +46,15 @@ def root():
                 "add_directory": "/llm/rag/directory",
                 "list_namespaces": "/llm/rag/namespaces",
                 "list_documents": "/llm/rag/documents",
-                "last_results": "/llm/rag/last-results",
+                "delete_namespace": "/llm/rag/namespace/{namespace}",
+                "namespace_stats": "/llm/rag/namespace/{namespace}/stats",
             },
             "memory": {
                 "context": "/llm/memory/context",
-                "history": "/llm/memory/history",
-                "stats": "/llm/memory/stats",
+                "history": "/llm/memory/history/{session_id}",
+                "stats": "/llm/memory/stats/{session_id}",
                 "search": "/llm/memory/search",
                 "clear": "/llm/memory/session/{session_id}",
-            },
-            "context": {
-                "window": "/llm/context-window",
             },
             "config": {
                 "status": "/config/status",
@@ -71,10 +69,9 @@ def root():
                 "reset_all": "/session/reset-all",
             },
             "mpc": {
-                "create_instance": "/mpc/instances",
-                "delete_instance": "/mpc/instances/{instance_id}",
-                "get_instance": "/mpc/instances/{instance_id}",
-                "list_instances": "/mpc/instances",
+                "list_tools": "/mpc/tools",
+                "tool_names": "/mpc/tools/names",
+                "get_tool": "/mpc/tools/{tool_name}",
             },
         },
     }

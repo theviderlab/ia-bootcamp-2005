@@ -1,6 +1,22 @@
 # Frontend for Agent Lab
 
+⚠️ **IMPORTANT**: This is a specification document. Implementation has not yet started. This README defines requirements, architecture, and integration patterns for development.
+
+## Project Status
+
+- **Backend API**: ✅ Fully implemented and documented in `docs/API.md`
+- **Frontend Implementation**: ❌ Not started (only placeholder files exist)
+- **Configuration Files**: ❌ Need to be created (see Setup section below)
+
 This directory contains the design specifications and documentation for the Agent Lab frontend application. The goal is to build a clean, minimalist interface for interacting with the AI Agent ecosystem, managing memory, and utilizing RAG capabilities.
+
+## Technical Requirements
+
+- **Authentication**: Single-user system (for testing/development purposes only)
+- **Mobile Support**: Yes - responsive design required for mobile/tablet
+- **File Upload**: Accepts text content or file paths (see RAG Section for details)
+- **Browser Requirements**: Modern browsers with ES6+ support
+- **Backend Dependency**: Requires backend server running at `http://localhost:8000`
 
 ## Technology Stack (Recommended)
 
@@ -81,6 +97,33 @@ frontend/
 
 The application features a modern, split-screen layout designed for focus and ease of configuration.
 
+### Responsive Design Strategy
+
+**Desktop (≥1024px)**:
+- Split-screen layout: Chat on left (60%), Sidebar on right (40%)
+- Tabs in horizontal row at top
+- Full sidebar visible with all sections expanded
+
+**Tablet (768px - 1023px)**:
+- Stack layout: Chat above, Sidebar below
+- Or: Sidebar as collapsible drawer (hamburger menu)
+- Tabs remain horizontal but may scroll
+
+**Mobile (≤767px)**:
+- Full-width single column layout
+- Sidebar becomes bottom sheet or slide-out drawer
+- Tabs become dropdown or bottom navigation
+- Action buttons in floating action button (FAB) or menu
+- Touch-optimized: larger tap targets, swipe gestures
+- Virtual keyboard considerations for input field
+
+**Breakpoint Summary**:
+```css
+/* Mobile first approach */
+@media (min-width: 768px) { /* Tablet */ }
+@media (min-width: 1024px) { /* Desktop */ }
+```
+
 ### Tab System Architecture
 
 The interface uses a dynamic tab system where tabs appear/disappear based on enabled features and user actions:
@@ -102,14 +145,16 @@ The interface uses a dynamic tab system where tabs appear/disappear based on ena
     - Shows confirmation dialog before executing.
     - Generates new session ID.
     - Clears chat interface.
+    - **⚠️ Note**: Clears conversation history from ALL sessions (not just current). This is by design as the system works with one active session at a time.
   - **Delete All** (💀 skull icon): Nuclear option - deletes ALL data and restores system to initial state.
-    - Shows strong warning dialog with confirmation input (type "DELETE" to confirm).
+    - Shows strong warning dialog with confirmation input (must type "DELETE" exactly - case-sensitive).
     - Deletes:
       - All short-term memory (conversation buffers)
       - All long-term memory (semantic, episodic, profile, procedural)
       - All RAG documents and vectors (Pinecone)
       - All session data (MySQL database)
     - Restores system to factory settings.
+    - **Important**: This is irreversible - no backups are created.
 - **Style**: Minimalist, low profile. Active tab highlighted. Action buttons are icon-only with tooltips.
 
 ### 2. Main Layout (Left Panel - Chat)
@@ -134,8 +179,27 @@ Controls to manage the agent's memory capabilities.
 #### B. RAG Section (Retrieval-Augmented Generation)
 Interface for managing the knowledge base and context.
 - **Drag and Drop**: Area to upload files (text, markdown, logs) directly to the RAG system.
-- **Document List**: Displays uploaded documents/namespaces.
-- **Selection**: Toggles to enable/disable specific documents or namespaces for the current chat context.
+  - **File Upload Mechanism**: Backend accepts either:
+    - Text content directly (string)
+    - File paths (string, e.g., `"./docs/manual.md"`)
+  - **Frontend Strategy**: 
+    - Read file content in browser using FileReader API
+    - Send content as text string in request body
+    - No multipart/form-data upload needed
+  - **Example payload**:
+    ```json
+    {
+      "documents": [
+        "This is direct text content",
+        "./docs/manual.md",
+        "More text content..."
+      ],
+      "namespace": "my-docs"
+    }
+    ```
+- **Document List**: Displays uploaded documents/namespaces with counts.
+- **Namespace Selection**: Toggles to enable/disable specific namespaces for chat context.
+- **Document Filtering**: View documents by namespace using `/llm/rag/documents` endpoint.
 
 #### C. MCP Section (Model Context Protocol)
 Interface para gestionar las herramientas (tools) disponibles del sistema.
@@ -254,11 +318,20 @@ Interface para gestionar las herramientas (tools) disponibles del sistema.
 
 The frontend interacts with the backend API (default: `http://localhost:8000`). Below is the mapping of UI components to API endpoints defined in `docs/API.md`.
 
+**⚠️ CRITICAL ARCHITECTURE PATTERN:**
+
+The backend manages ALL conversation history and context via `session_id`. The frontend should:
+- ✅ **Send only the current user message** in the `messages` array to `/llm/chat`
+- ✅ **Store full conversation locally** for UI display (in state/store)
+- ✅ **Let the backend reconstruct context** from its memory system
+
+**Do NOT send the full conversation history** to the backend. This causes context leakage when memory is disabled.
+
 ### Chat Tab (Main Interface)
 - **Send Message**: `POST /llm/chat`
   - **Payload**:
-    - `messages`: Array of conversation history.
-    - `session_id`: Current session identifier.
+    - `messages`: **Array with single current user message** (NOT full history).
+    - `session_id`: Current session identifier (backend uses this to retrieve context).
     - `memory_types`: Array of enabled types from the Memory Sidebar.
     - `rag_namespaces`: Array of enabled namespaces from the RAG Sidebar.
   - **Response**: Includes `response`, `session_id`, `context_text`, `context_tokens`, and `rag_sources`.
@@ -395,8 +468,8 @@ The frontend interacts with the backend API (default: `http://localhost:8000`). 
     - Preserve long-term memory and RAG data.
     - Return new session ID to frontend.
 
-- **Delete All**: **(NEW ENDPOINT NEEDED)** `DELETE /system/reset-all`
-  - **Payload**: `confirmation` (string, must be "DELETE").
+- **Delete All**: `POST /session/reset-all`
+  - **Payload**: `confirmation` (string, must be "DELETE" - case-sensitive).
   - **Response**:
     ```json
     {
@@ -814,9 +887,25 @@ import axios from 'axios';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const chatService = {
+  /**
+   * Send a chat message to the backend.
+   * 
+   * IMPORTANT ARCHITECTURE NOTE:
+   * - messages array should contain ONLY the current user message
+   * - Backend manages conversation history via session_id
+   * - Do NOT send full conversation history in messages array
+   * 
+   * @param {Array} messages - Single-element array with current user message
+   * @param {Object} config - Configuration for memory, RAG, tools
+   */
   sendMessage: async (messages, config) => {
+    // Validate that messages contains only one message (current user input)
+    if (messages.length !== 1) {
+      console.warn('⚠️ Messages array should contain only the current message');
+    }
+    
     const response = await axios.post(`${API_BASE_URL}/llm/chat`, {
-      messages,
+      messages,  // Single message only - backend handles history
       session_id: config.sessionId,
       use_memory: config.memory.enabled,
       memory_types: config.memory.types,
@@ -891,7 +980,7 @@ export const mcpService = {
 };
 ```
 
-**Session Service:**
+**Chat Hook Example:**
 ```javascript
 // hooks/useChat.js
 import { useState } from 'react';
@@ -904,14 +993,18 @@ export const useChat = (sessionId) => {
   const sendMessage = async (content, config) => {
     setLoading(true);
     try {
+      // Add user message to local state (for UI display)
       const newMessage = { role: 'user', content };
       setMessages((prev) => [...prev, newMessage]);
       
+      // ✅ CORRECT: Send only the new message to backend
+      // Backend handles context via session_id
       const response = await chatService.sendMessage(
-        [...messages, newMessage],
+        [newMessage],  // Only current message - NOT full history
         config
       );
       
+      // Add assistant response to local state (for UI display)
       const assistantMessage = { 
         role: 'assistant', 
         content: response.response 
@@ -1041,11 +1134,12 @@ export const useMCP = () => {
 
 ### Phase 4: Context Window & Polish (Week 5)
 - [ ] Build Context Window tab.
-- [ ] Connect to `GET /llm/context-window` endpoint (once implemented).
+- [ ] Display context from `/llm/chat` response (context_text and context_tokens fields).
 - [ ] Implement token usage visualization.
 - [ ] Add syntax highlighting for code blocks.
 - [ ] Polish UI/UX with animations and feedback.
 - [ ] Add error handling and loading states.
+- [ ] Responsive design for mobile/tablet.
 
 ### Phase 5: Testing & Documentation (Week 6)
 - [ ] Write unit tests for components.
@@ -1054,31 +1148,97 @@ export const useMCP = () => {
 - [ ] User documentation.
 - [ ] Deployment setup.
 
-### Phase 6: Session Management & Safety (Week 7)
+### Phase 6: MCP Tools & Session Management (Week 7)
+- [ ] Implement MCP Section in sidebar with tool toggles.
+- [ ] Connect to `GET /mpc/tools` endpoint.
+- [ ] Display tool results in chat when tools are used.
 - [ ] Implement Reset Session button with confirmation dialog.
 - [ ] Connect to `POST /session/reset` endpoint.
 - [ ] Implement Delete All button with strong warning.
-- [ ] Connect to `DELETE /system/reset-all` endpoint.
-- [ ] Add confirmation input (type "DELETE" to confirm).
+- [ ] Connect to `POST /session/reset-all` endpoint.
+- [ ] Add confirmation input (type "DELETE" to confirm - case sensitive).
 - [ ] Test session reset preserves long-term data.
 - [ ] Test delete all clears everything correctly.
 - [ ] Add loading states and success/error feedback.
 
+## Getting Started
+
+### Prerequisites
+
+- Node.js >= 18.0.0
+- npm >= 9.0.0 (or pnpm/yarn)
+- Backend server running at `http://localhost:8000`
+
+### Installation
+
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install dependencies
+npm install
+
+# Copy environment file and configure
+cp .env.example .env
+# Edit .env with your API URL if different from default
+
+# Start development server
+npm run dev
+```
+
+The application will be available at `http://localhost:5173`
+
+### Development Commands
+
+```bash
+# Start development server with hot reload
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+
+# Run linter
+npm run lint
+
+# Format code
+npm run format
+```
+
+### Testing Backend Connection
+
+Once the dev server is running, open browser console and test:
+
+```javascript
+// Test health endpoint
+fetch('http://localhost:8000/health')
+  .then(r => r.json())
+  .then(console.log)
+```
+
 ## Environment Configuration
 
-Create a `.env` file in the frontend directory:
+The `.env.example` file is provided as a template. Copy it to `.env` and adjust values as needed:
 
 ```bash
 # API Configuration
 VITE_API_URL=http://localhost:8000
 
-# Feature Flags (optional)
-VITE_ENABLE_MPC=false
+# Feature Flags
+VITE_ENABLE_MCP=true
 VITE_ENABLE_DEBUG_MODE=true
 
 # Session Configuration
 VITE_DEFAULT_SESSION_TIMEOUT=3600000  # 1 hour in ms
 ```
+
+**Environment Variables:**
+- `VITE_API_URL`: Backend API base URL (default: http://localhost:8000)
+- `VITE_ENABLE_MCP`: Enable MCP tools section (default: true)
+- `VITE_ENABLE_DEBUG_MODE`: Enable console logging for API calls (default: true)
+- `VITE_DEFAULT_SESSION_TIMEOUT`: Session timeout in milliseconds
 
 ## Browser Support
 

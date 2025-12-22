@@ -50,6 +50,9 @@ class MemoryConfig:
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-ada-002"
     summary_model: str = "gpt-3.5-turbo"
+    
+    # Semantic search configuration
+    semantic_search_top_k: int = 5  # Number of relevant conversations to retrieve
 
     # Privacy and retention settings
     retention_days: int | None = None  # None = keep forever
@@ -89,6 +92,7 @@ class MemoryConfig:
             - OPENAI_API_KEY: OpenAI API key
             - EMBEDDING_MODEL: Embedding model name
             - SUMMARY_MODEL: Summary model name
+            - SEMANTIC_SEARCH_TOP_K: Number of results for semantic search (default: 5)
             - RETENTION_DAYS: Days to keep memory (None = forever)
             - ENABLE_ANONYMIZATION: Enable data anonymization
             - BATCH_SIZE: Batch size for operations
@@ -190,6 +194,7 @@ class MemoryConfig:
                 "EMBEDDING_MODEL", "text-embedding-ada-002"
             ),
             summary_model=os.getenv("SUMMARY_MODEL", "gpt-3.5-turbo"),
+            semantic_search_top_k=int(os.getenv("SEMANTIC_SEARCH_TOP_K", "5")),
             # Privacy
             retention_days=retention_days,
             enable_anonymization=os.getenv(

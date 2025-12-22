@@ -419,7 +419,6 @@ def bulk_insert_knowledge_documents(
         finally:
             cursor.close()
 
-
 def get_knowledge_documents(top_k: int = 10) -> list[dict[str, Any]]:
     """
     Retrieve knowledge base documents.
@@ -608,6 +607,42 @@ def delete_session_config(
 # System Reset Operations
 # ============================================================================
 
+
+def get_latest_session_id(
+    config: DatabaseConfig | None = None,
+) -> str | None:
+    """
+    Get the most recent session ID from session configs.
+    
+    Returns the session_id with the most recent created_at timestamp
+    from the session_configs table.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Most recent session_id or None if no sessions exist.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = """
+        SELECT session_id
+        FROM session_configs
+        ORDER BY created_at DESC
+        LIMIT 1
+    """
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(query)
+            result = cursor.fetchone()
+            return result["session_id"] if result else None
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to get latest session: {e}") from e
+        finally:
+            cursor.close()
 
 def count_unique_sessions(
     config: DatabaseConfig | None = None,
@@ -840,6 +875,7 @@ def get_table_counts(
         "session_configs": "SELECT COUNT(*) as count FROM session_configs",
         "knowledge_base": "SELECT COUNT(*) as count FROM knowledge_base",
         "mpc_instances": "SELECT COUNT(*) as count FROM mpc_instances",
+        "user_profiles": "SELECT COUNT(*) as count FROM user_profiles",
     }
 
     counts = {}
@@ -859,3 +895,145 @@ def get_table_counts(
             raise RuntimeError(f"Failed to get table counts: {e}") from e
         finally:
             cursor.close()
+
+
+# ============================================================================
+# User Profile CRUD Operations
+# ============================================================================
+
+
+def get_user_profile(
+    config: DatabaseConfig | None = None,
+) -> dict[str, Any] | None:
+    """
+    Get the current user profile (single row).
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        Dictionary with profile data, version, and metadata or None if not exists.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = """
+        SELECT id, profile_data, version, last_updated_message_id, 
+               created_at, updated_at
+        FROM user_profiles
+        ORDER BY id DESC
+        LIMIT 1
+    """
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(query)
+            row = cursor.fetchone()
+            
+            if not row:
+                return None
+            
+            return {
+                "id": row["id"],
+                "profile_data": json.loads(row["profile_data"]) if row["profile_data"] else {},
+                "version": row["version"],
+                "last_updated_message_id": row["last_updated_message_id"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        except MySQLError as e:
+            raise RuntimeError(f"Failed to get user profile: {e}") from e
+        finally:
+            cursor.close()
+
+
+def create_or_update_user_profile(
+    profile_data: dict[str, Any],
+    last_updated_message_id: int | None = None,
+    config: DatabaseConfig | None = None,
+) -> int:
+    """
+    Create or update the user profile (single row).
+
+    If a profile exists, updates it and increments version.
+    If no profile exists, creates a new one.
+
+    Args:
+        profile_data: User profile data dictionary.
+        last_updated_message_id: ID of last processed chat message.
+        config: Database configuration.
+
+    Returns:
+        Profile ID.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    profile_json = json.dumps(profile_data)
+    
+    # Check if profile exists
+    existing = get_user_profile(config)
+    
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            if existing:
+                # Update existing profile
+                query = """
+                    UPDATE user_profiles 
+                    SET profile_data = %s,
+                        version = version + 1,
+                        last_updated_message_id = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """
+                cursor.execute(query, (profile_json, last_updated_message_id, existing["id"]))
+                profile_id = existing["id"]
+            else:
+                # Create new profile
+                query = """
+                    INSERT INTO user_profiles (profile_data, version, last_updated_message_id)
+                    VALUES (%s, 1, %s)
+                """
+                cursor.execute(query, (profile_json, last_updated_message_id))
+                profile_id = cursor.lastrowid
+            
+            conn.commit()
+            return profile_id
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to create/update user profile: {e}") from e
+        finally:
+            cursor.close()
+
+
+def delete_user_profile(
+    config: DatabaseConfig | None = None,
+) -> bool:
+    """
+    Delete the user profile.
+
+    Args:
+        config: Database configuration.
+
+    Returns:
+        True if deleted, False if no profile existed.
+
+    Raises:
+        RuntimeError: If database operation fails.
+    """
+    query = "DELETE FROM user_profiles"
+
+    with get_db_connection(config) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query)
+            conn.commit()
+            return cursor.rowcount > 0
+        except MySQLError as e:
+            conn.rollback()
+            raise RuntimeError(f"Failed to delete user profile: {e}") from e
+        finally:
+            cursor.close()
+

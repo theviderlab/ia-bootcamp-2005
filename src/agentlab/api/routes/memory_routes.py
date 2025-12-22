@@ -312,3 +312,209 @@ async def search_semantic_memory(request: MemorySearchRequest):
         raise HTTPException(
             status_code=500, detail=f"Failed to search memory: {str(e)}"
         )
+
+
+@router.get("/profile", response_model=dict)
+async def get_user_profile():
+    """
+    Get the current user profile.
+
+    Returns:
+        User profile data dictionary.
+
+    Raises:
+        HTTPException: If retrieval fails or no profile exists.
+    """
+    from agentlab.database.crud import get_user_profile as db_get_user_profile
+
+    try:
+        profile = db_get_user_profile()
+        
+        if not profile:
+            raise HTTPException(status_code=404, detail="No user profile found")
+        
+        return {
+            "profile_data": profile["profile_data"],
+            "version": profile["version"],
+            "last_updated": profile["updated_at"].isoformat() if profile["updated_at"] else None,
+            "created_at": profile["created_at"].isoformat() if profile["created_at"] else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get profile: {str(e)}"
+        )
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Request model for profile update."""
+    
+    session_id: str = Field(..., description="Session to extract profile from")
+    incremental: bool = Field(True, description="Only process new messages")
+
+
+@router.post("/profile/extract", response_model=dict)
+async def extract_user_profile(request: ProfileUpdateRequest):
+    """
+    Extract and update user profile from conversation.
+
+    Args:
+        request: Profile extraction request.
+
+    Returns:
+        Updated profile data.
+
+    Raises:
+        HTTPException: If extraction fails.
+    """
+    try:
+        memory_service = get_memory_service()
+        
+        if not memory_service.long_term:
+            raise HTTPException(
+                status_code=400,
+                detail="Long-term memory not enabled"
+            )
+        
+        profile = memory_service.long_term.extract_and_store_profile(
+            session_id=request.session_id,
+            incremental=request.incremental
+        )
+        
+        return {"profile_data": profile, "status": "updated"}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to extract profile: {str(e)}"
+        )
+
+
+@router.delete("/profile")
+async def delete_user_profile():
+    """
+    Delete the user profile.
+
+    Returns:
+        Deletion status.
+
+    Raises:
+        HTTPException: If deletion fails.
+    """
+    from agentlab.database.crud import delete_user_profile as db_delete_user_profile
+
+    try:
+        deleted = db_delete_user_profile()
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="No user profile found")
+        
+        return {"status": "deleted", "message": "User profile deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete profile: {str(e)}"
+        )
+
+
+# ============================================================================
+# Future Long-term Memory Extraction Endpoints (Stubs)
+# ============================================================================
+
+
+@router.post("/semantic/extract", response_model=dict)
+async def extract_semantic_memory(request: ProfileUpdateRequest):
+    """
+    Extract and store semantic facts from conversation.
+
+    Creates embeddings directly from chat history and stores them
+    in the vector database with conversation timestamps.
+
+    Args:
+        request: Extraction request with session_id.
+
+    Returns:
+        Extraction status with count and metadata.
+
+    Raises:
+        HTTPException: If extraction fails or semantic storage not configured.
+    """
+    try:
+        memory_service = get_memory_service()
+        
+        if not memory_service or not memory_service.long_term:
+            raise HTTPException(
+                status_code=400,
+                detail="Long-term memory not enabled"
+            )
+        
+        result = memory_service.long_term.extract_and_store_semantic(
+            session_id=request.session_id,
+            limit=100
+        )
+        
+        return result
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Configuration error: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to extract semantic memory: {str(e)}"
+        )
+
+
+@router.post("/episodic/extract", response_model=dict)
+async def extract_episodic_memory(request: ProfileUpdateRequest):
+    """
+    Extract and store episodic summary from conversation.
+
+    Args:
+        request: Extraction request with session_id.
+
+    Returns:
+        Extraction status.
+
+    Raises:
+        HTTPException: Not yet implemented.
+        
+    Note:
+        This endpoint is a stub for future implementation.
+        Episodic memory will create temporal summaries of conversation flow.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail="Episodic memory extraction not yet implemented"
+    )
+
+
+@router.post("/procedural/extract", response_model=dict)
+async def extract_procedural_memory(request: ProfileUpdateRequest):
+    """
+    Extract and store procedural patterns from conversation.
+
+    Args:
+        request: Extraction request with session_id.
+
+    Returns:
+        Extraction status.
+
+    Raises:
+        HTTPException: Not yet implemented.
+        
+    Note:
+        This endpoint is a stub for future implementation.
+        Procedural patterns will identify user workflows and interaction styles.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail="Procedural memory extraction not yet implemented"
+    )
+
+

@@ -26,21 +26,40 @@ from agentlab.config.rag_config import RAGConfig
 router = APIRouter()
 
 
-@router.post("/reset", response_model=SessionResetResponse)
-async def reset_session(request: SessionResetRequest):
+@router.get("/latest")
+async def get_latest_session():
     """
-    Reset current session and create a new one.
+    Get the most recent session ID from chat history.
     
-    Clears ALL short-term memory (conversation buffer from all sessions)
-    while preserving long-term memory (semantic facts, episodic summaries,
-    user profile, procedural patterns) and RAG documents.
-    
-    Note: This deletes chat history from ALL sessions, not just the current one.
-    This is because the system works with one active session at a time.
-    
-    Args:
-        request: SessionResetRequest with current_session_id.
+    Returns:
+        Dictionary with session_id or null if no sessions exist.
         
+    Example:
+        >>> GET /session/latest
+        >>> 
+        >>> Response:
+        >>> {
+        >>>   "session_id": "550e8400-e29b-41d4-a716-446655440000"
+        >>> }
+    """
+    try:
+        latest_session_id = crud.get_latest_session_id()
+        return {"session_id": latest_session_id}
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get latest session: {str(e)}",
+        )
+
+@router.post("/reset", response_model=SessionResetResponse)
+async def reset_session():
+    """
+    Reset the system by clearing all chat history and creating a fresh session.
+    
+    Deletes ALL chat messages from ALL sessions and generates a new session ID
+    with default configuration. Preserves long-term memory (semantic facts,
+    episodic summaries, user profile, procedural patterns) and RAG documents.
+    
     Returns:
         SessionResetResponse with new session_id and success message.
         
@@ -49,31 +68,41 @@ async def reset_session(request: SessionResetRequest):
         
     Example:
         >>> POST /session/reset
-        >>> {
-        >>>   "current_session_id": "session-abc-123"
-        >>> }
         >>> 
         >>> Response:
         >>> {
         >>>   "success": true,
         >>>   "new_session_id": "550e8400-e29b-41d4-a716-446655440000",
-        >>>   "message": "Session reset successfully. Short-term memory cleared (15 messages)."
+        >>>   "message": "Session reset successfully. Chat history cleared (15 messages)."
         >>> }
     """
     try:
         # Generate new UUID for session
         new_session_id = str(uuid.uuid4())
         
-        # Clear ALL short-term memory (chat history from all sessions)
-        # Since we work with one session at a time, we delete all chat history
-        deleted_count = crud.delete_all_chat_history()
+        # Clear ALL data from previous sessions
+        deleted_count = crud.delete_all_chat_history()  # Delete all chat messages
+        crud.delete_all_session_configs()  # Delete all old session configurations
+        
+        # Create fresh session configuration with default values
+        from agentlab.models.config_models import MemoryToggles, RAGToggles
+        default_memory = MemoryToggles().model_dump()
+        default_rag = RAGToggles().model_dump()
+        crud.create_or_update_session_config(
+            session_id=new_session_id,
+            memory_config=default_memory,
+            rag_config=default_rag,
+            metadata={"created_by": "reset"},
+        )
         
         return SessionResetResponse(
             success=True,
             new_session_id=new_session_id,
-            message=f"Session reset successfully. Short-term memory cleared ({deleted_count} messages).",
+            message=f"Session reset successfully. Chat history cleared ({deleted_count} messages).",
         )
         
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(
             status_code=500,

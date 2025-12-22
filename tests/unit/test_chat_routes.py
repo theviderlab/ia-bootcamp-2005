@@ -236,3 +236,80 @@ def test_chat_endpoint_with_default_parameters(mock_llm_class):
     call_args = mock_llm.chat.call_args
     assert call_args.kwargs["temperature"] == 0.7
     assert call_args.kwargs["max_tokens"] == 500
+
+
+@patch("agentlab.api.routes.chat_routes.get_session_config")
+@patch("agentlab.api.routes.chat_routes.IntegratedMemoryService")
+@patch("agentlab.api.routes.chat_routes.LangChainLLM")
+def test_chat_endpoint_respects_disabled_memory_config(
+    mock_llm_class, mock_memory_class, mock_get_session_config
+):
+    """Test that chat endpoint respects session memory configuration when all memory is disabled."""
+    # Setup LLM mock
+    mock_llm = Mock()
+    mock_llm.chat.return_value = "Response without memory context"
+    mock_llm_class.return_value = mock_llm
+    
+    # Setup memory service mock
+    mock_memory = Mock()
+    # When all memory is disabled, context should be empty
+    from agentlab.models import MemoryContext
+    mock_memory.get_context.return_value = MemoryContext(
+        session_id="test-session",
+        short_term_context="",
+        semantic_facts=[],
+        user_profile={},
+        episodic_summary=None,
+        procedural_patterns=None,
+        total_messages=0,
+        metadata={"memory_type": "disabled"},
+    )
+    mock_memory_class.return_value = mock_memory
+    
+    # Mock session config with all memory disabled
+    mock_get_session_config.return_value = {
+        "memory_config": {
+            "enable_short_term": False,
+            "enable_semantic": False,
+            "enable_episodic": False,
+            "enable_profile": False,
+            "enable_procedural": False,
+        }
+    }
+    
+    response = client.post(
+        "/llm/chat",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "session_id": "test-session",
+            "use_memory": True,
+        }
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Verify memory service was called with config
+    mock_memory.get_context.assert_called_once()
+    call_args = mock_memory.get_context.call_args
+    assert call_args.kwargs["session_id"] == "test-session"
+    assert call_args.kwargs["memory_config"] == {
+        "enable_short_term": False,
+        "enable_semantic": False,
+        "enable_episodic": False,
+        "enable_profile": False,
+        "enable_procedural": False,
+    }
+    
+    # Verify context is empty (no memory sections)
+    assert data["context_text"] == ""
+    assert data["context_tokens"] == 0
+    
+    # Verify LLM was called without memory context in system message
+    mock_llm.chat.assert_called_once()
+    call_args = mock_llm.chat.call_args
+    messages = call_args.args[0]
+    # Should only have the user message, no system context message
+    assert len(messages) == 1
+    assert messages[0].role == "user"
+    assert messages[0].content == "Hello"
