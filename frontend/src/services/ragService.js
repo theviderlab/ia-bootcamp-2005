@@ -128,15 +128,24 @@ export const ragService = {
 
   /**
    * Update RAG configuration
+   * @param {string} sessionId - Session identifier
    * @param {boolean} enabled - Enable/disable RAG
    * @param {Array<string>} namespaces - Selected namespaces
+   * @param {number} topK - Number of documents to retrieve
    * @returns {Promise<Object>} Configuration update result
    */
-  updateConfig: async (enabled, namespaces = []) => {
-    const response = await apiClient.put(API_ENDPOINTS.CONFIG_RAG, {
-      enabled,
-      namespaces,
-    });
+  updateConfig: async (sessionId, enabled, namespaces = [], topK = 5) => {
+    const response = await apiClient.put(
+      API_ENDPOINTS.CONFIG_RAG,
+      {
+        enable_rag: enabled,
+        namespaces,
+        top_k: topK,
+      },
+      {
+        params: { session_id: sessionId },
+      }
+    );
     return response.data;
   },
 };

@@ -98,7 +98,6 @@ class RAGQueryRequest(BaseModel):
     top_k: int = Field(5, ge=1, le=20, description="Number of documents to retrieve")
     namespace: str | None = Field(None, description="Optional namespace to search")
 
-
 class RAGQueryResponse(BaseModel):
     """Response model for RAG query."""
 
@@ -106,7 +105,6 @@ class RAGQueryResponse(BaseModel):
     response: str
     sources: list[dict]
     error_message: str | None = None
-
 
 class RAGAddDocumentsRequest(BaseModel):
     """Request model for adding documents to RAG."""
@@ -124,14 +122,12 @@ class RAGAddDocumentsRequest(BaseModel):
         200, ge=0, le=1000, description="Overlapping characters between chunks"
     )
 
-
 class RAGAddDocumentsResponse(BaseModel):
     """Response model for document addition."""
 
     success: bool
     message: str
     documents_added: int
-
 
 class RAGAddDirectoryRequest(BaseModel):
     """Request model for adding directory of documents."""
@@ -148,14 +144,12 @@ class RAGAddDirectoryRequest(BaseModel):
         200, ge=0, le=1000, description="Overlapping characters between chunks"
     )
 
-
 class RAGDeleteNamespaceResponse(BaseModel):
     """Response model for namespace deletion."""
 
     success: bool
     namespace: str
     message: str
-
 
 class RAGNamespaceStatsResponse(BaseModel):
     """Response model for namespace statistics."""
@@ -212,7 +206,6 @@ async def rag_query(request: RAGQueryRequest):
             status_code=500, detail=f"RAG query failed: {str(e)}"
         )
 
-
 @router.post("/documents", response_model=RAGAddDocumentsResponse)
 async def add_documents(request: RAGAddDocumentsRequest):
     """
@@ -254,7 +247,6 @@ async def add_documents(request: RAGAddDocumentsRequest):
         raise HTTPException(
             status_code=500, detail=f"Failed to add documents: {str(e)}"
         )
-
 
 @router.post("/directory", response_model=RAGAddDocumentsResponse)
 async def add_directory(request: RAGAddDirectoryRequest):
@@ -325,7 +317,6 @@ async def add_directory(request: RAGAddDirectoryRequest):
             status_code=500, detail=f"Failed to add directory: {str(e)}"
         )
 
-
 @router.get("/namespace/{namespace}/stats", response_model=RAGNamespaceStatsResponse)
 async def get_namespace_stats(namespace: str):
     """
@@ -377,7 +368,6 @@ async def get_namespace_stats(namespace: str):
             detail=f"Failed to get stats for namespace '{namespace}': {str(e)}",
         )
 
-
 @router.delete("/namespace/{namespace}", response_model=RAGDeleteNamespaceResponse)
 async def delete_namespace(namespace: str):
     """
@@ -427,7 +417,6 @@ async def delete_namespace(namespace: str):
             detail=f"Failed to delete namespace '{namespace}': {str(e)}",
         )
 
-
 @router.get("/namespaces", response_model=NamespaceListResponse)
 async def list_rag_namespaces():
     """
@@ -472,7 +461,6 @@ async def list_rag_namespaces():
             status_code=500,
             detail=f"Failed to list namespaces: {str(e)}",
         )
-
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_rag_documents(

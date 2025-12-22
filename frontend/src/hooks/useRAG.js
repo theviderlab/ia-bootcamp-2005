@@ -7,7 +7,7 @@ import { useChatStore } from '@store/chatStore';
  * Handles RAG configuration, document upload, and namespace management
  */
 export const useRAG = () => {
-  const { sessionId } = useChatStore();
+  const { sessionId, sessionReady } = useChatStore();
 
   // RAG configuration state
   const [ragEnabled, setRagEnabled] = useState(false);
@@ -38,8 +38,9 @@ export const useRAG = () => {
       const preSessionConfig = localStorage.getItem('preSessionRagConfig');
 
       if (preSessionConfig) {
-        try {
+    try {
           const config = JSON.parse(preSessionConfig);
+
           setRagEnabled(config.enabled ?? false);
           setSelectedNamespaces(config.namespaces ?? []);
           return;
@@ -60,7 +61,7 @@ export const useRAG = () => {
       const response = await memoryService.getConfig(sessionId);
       const config = response.config;
 
-      setRagEnabled(config.rag?.enabled ?? false);
+      setRagEnabled(config.rag?.enable_rag ?? false);
       setSelectedNamespaces(config.rag?.namespaces ?? []);
 
       // Clear pre-session config after successful sync
@@ -100,11 +101,18 @@ export const useRAG = () => {
         setLoading(true);
         setError(null);
 
-        await ragService.updateConfig(enabled, namespaces);
+        const response = await ragService.updateConfig(sessionId, enabled, namespaces);
 
-        // Update local state
-        setRagEnabled(enabled);
-        setSelectedNamespaces(namespaces);
+        // Update local state from backend response (same pattern as useMemory)
+        if (response && response.config && response.config.rag) {
+          const rag = response.config.rag;
+          setRagEnabled(rag.enable_rag ?? false);
+          setSelectedNamespaces(rag.namespaces ?? []);
+        } else {
+          console.warn('[useRAG] Backend response missing config.rag, using sent values');
+          setRagEnabled(enabled);
+          setSelectedNamespaces(namespaces);
+        }
       } catch (err) {
         console.error('Failed to update RAG config:', err);
         setError('Failed to update RAG configuration');
@@ -276,12 +284,20 @@ export const useRAG = () => {
   );
 
   /**
-   * Load initial data on mount
+   * Load config when sessionId is available
    */
   useEffect(() => {
-    loadConfig();
+    if (sessionId) {
+      loadConfig();
+    }
+  }, [sessionId]);
+
+  /**
+   * Fetch namespaces on mount
+   */
+  useEffect(() => {
     fetchNamespaces();
-  }, [loadConfig, fetchNamespaces]);
+  }, [fetchNamespaces]);
 
   return {
     // State

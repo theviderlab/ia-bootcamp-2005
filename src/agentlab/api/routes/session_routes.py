@@ -189,6 +189,9 @@ async def reset_all_data(request: SystemResetRequest):
             # Delete all knowledge base documents
             rag_count = crud.delete_all_knowledge_base()
             
+            # Delete user profile
+            crud.delete_user_profile()
+            
         except Exception as e:
             print(f"Warning: Database cleanup failed: {e}")
         

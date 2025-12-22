@@ -136,7 +136,12 @@ class GenerateResponse(BaseModel):
     prompt: str
 
 class ChatRequest(BaseModel):
-    """Request model for chat endpoint."""
+    """
+    Request model for chat endpoint.
+    
+    Configuration (memory, RAG, tools) is read from session_configs table in database.
+    Only generation parameters are passed in the request.
+    """
 
     messages: list[dict[str, str]] = Field(
         ...,
@@ -144,46 +149,13 @@ class ChatRequest(BaseModel):
         description="Chat message history with 'role' and 'content' fields"
     )
     session_id: str | None = Field(None, description="Optional session identifier")
+    
+    # Generation parameters
     temperature: float = Field(
         0.7, ge=0.0, le=1.0, description="Sampling temperature"
     )
     max_tokens: int = Field(
         500, gt=0, le=4000, description="Maximum tokens to generate"
-    )
-    
-    # Runtime configuration toggles
-    use_memory: bool = Field(
-        True, description="Enable memory context retrieval"
-    )
-    use_rag: bool = Field(
-        False, description="Enable RAG document retrieval"
-    )
-    use_tools: bool = Field(
-        False, description="Enable MCP tool calling for the agent"
-    )
-    
-    # Memory configuration
-    memory_types: list[str] | None = Field(
-        None,
-        description="Specific memory types to use: semantic, episodic, profile, procedural",
-    )
-    
-    # RAG configuration
-    rag_namespaces: list[str] | None = Field(
-        None,
-        description="Specific Pinecone namespaces to query (empty = all)",
-    )
-    rag_top_k: int = Field(
-        5, ge=1, le=20, description="Number of RAG documents to retrieve"
-    )
-    
-    # Tool configuration
-    tool_names: list[str] | None = Field(
-        None,
-        description="Specific MCP tool names to enable (empty = all registered tools)",
-    )
-    max_tool_iterations: int = Field(
-        5, ge=1, le=20, description="Maximum agent iterations to prevent infinite loops"
     )
     
     # Context configuration
@@ -384,77 +356,136 @@ async def chat(request: ChatRequest):
             except Exception as e:
                 print(f"⚠️  Could not create session config: {e}")
         
-        # Get services
+        # Get services (always initialize - will check DB config to determine usage)
         llm = get_llm()
-        memory_service = get_memory_service() if request.use_memory else None
-        rag_service = get_rag_service() if request.use_rag else None
+        memory_service = get_memory_service()
+        rag_service = get_rag_service()
         
-        # Store user message in memory
-        if memory_service and chat_messages:
+        # Load session configuration from database (SINGLE SOURCE OF TRUTH)
+        session_config = None
+        memory_config = None
+        rag_config = None
+        mcp_tools_config = None
+        
+        try:
+            session_config = get_session_config(session_id)
+            if session_config:
+                memory_config = session_config.get("memory_config", {})
+                rag_config = session_config.get("rag_config", {})
+                mcp_tools_config = session_config.get("mcp_tools_config", {})
+                print(f"✅ Loaded session config from DB for session: {session_id}")
+                print(f"   Memory config: {memory_config}")
+                print(f"   RAG config: {rag_config}")
+                print(f"   MCP Tools config: {mcp_tools_config}")
+        except Exception as e:
+            print(f"⚠️  Could not load session config from DB: {e}")
+            # Use default disabled configs
+            memory_config = {}
+            rag_config = {"enabled": False}
+            mcp_tools_config = {"enabled": False}
+        
+        # Determine if memory is enabled from DB config
+        memory_enabled = False
+        if memory_config:
+            # Memory is enabled if any type is enabled
+            memory_enabled = (
+                memory_config.get("enable_short_term", False) or
+                memory_config.get("enable_semantic", False) or
+                memory_config.get("enable_episodic", False) or
+                memory_config.get("enable_profile", False) or
+                memory_config.get("enable_procedural", False)
+            )
+        
+        # Store user message in memory (if enabled)
+        if memory_service and memory_enabled and chat_messages:
             last_msg = chat_messages[-1]
             if last_msg.role == "user":
                 memory_service.add_message(session_id, last_msg)
+                print(f"💾 Stored user message in memory")
 
-        # Retrieve memory context with session configuration
+        # Retrieve memory context (if enabled)
         memory_context = None
-        if memory_service:
+        if memory_service and memory_enabled:
             try:
-                # Get session configuration to respect memory toggles
-                memory_config = None
-                try:
-                    session_config = get_session_config(session_id)
-                    if session_config:
-                        memory_config = session_config.get("memory_config")
-                except Exception as e:
-                    print(f"⚠️  Could not load session config: {e}")
-                
-                print(memory_config)
-                # Get context with configuration filtering
+                print(f"🧠 Retrieving memory context with config: {memory_config}")
                 memory_context = memory_service.get_context(
                     session_id=session_id,
                     memory_config=memory_config
                 )
             except Exception as e:
-                # Log warning but continue without memory
                 print(f"⚠️  Memory retrieval failed: {e}")
 
-        # Retrieve RAG context
+        # Retrieve RAG context (if enabled in DB)
         rag_result = None
-        if rag_service and chat_messages:
+        print(rag_config)
+        rag_enabled = rag_config.get("enable_rag", False) if rag_config else False
+        
+        if rag_service and rag_enabled and chat_messages:
             try:
+                # Extract RAG parameters from DB config
+                rag_namespaces = rag_config.get("namespaces", [])
+                rag_top_k = rag_config.get("top_k", 5)
+                
+                print(f"🔍 Performing RAG retrieval with DB config: namespaces={rag_namespaces}, top_k={rag_top_k}")
+                
                 # Use last user message as query
                 user_query = next(
                     (msg.content for msg in reversed(chat_messages) if msg.role == "user"),
                     ""
                 )
+                
                 if user_query:
-                    # Query with optional namespace filtering
-                    if request.rag_namespaces:
-                        # Query each namespace separately and combine results
+                    if rag_namespaces:
+                        # Retrieve documents from each namespace separately and combine
                         all_sources = []
-                        for namespace in request.rag_namespaces:
-                            ns_result = rag_service.query(
-                                user_query,
-                                top_k=request.rag_top_k,
-                                namespace=namespace
-                            )
-                            if ns_result.success and ns_result.sources:
-                                all_sources.extend(ns_result.sources)
+                        for namespace in rag_namespaces:
+                            try:
+                                namespace_sources = rag_service.retrieve_documents(
+                                    user_query,
+                                    top_k=rag_top_k,
+                                    namespace=namespace
+                                )
+                                if namespace_sources:
+                                    all_sources.extend(namespace_sources)
+                            except Exception as ns_error:
+                                print(f"⚠️  Failed to retrieve from namespace '{namespace}': {ns_error}")
                         
-                        # Create combined result
+                        # Create RAGResult-like structure with combined sources
                         if all_sources:
-                            rag_result = rag_service.query(user_query, top_k=0)  # Empty query
-                            rag_result.sources = all_sources[:request.rag_top_k]  # Limit total
+                            # Sort by score and limit to top_k
+                            all_sources.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+                            limited_sources = all_sources[:rag_top_k]
+                            
+                            # Create a minimal RAGResult object for compatibility
+                            from agentlab.models import RAGResult
+                            rag_result = RAGResult(
+                                success=True,
+                                response="",  # Not used in chat flow
+                                sources=limited_sources,
+                                error_message=None
+                            )
+                            print(f"✅ RAG retrieval successful: {len(rag_result.sources)} sources from {len(rag_namespaces)} namespaces")
                     else:
-                        # Query all namespaces
-                        rag_result = rag_service.query(
-                            user_query,
-                            top_k=request.rag_top_k
-                        )
+                        # Retrieve from all namespaces
+                        try:
+                            sources = rag_service.retrieve_documents(user_query, top_k=rag_top_k)
+                            if sources:
+                                from agentlab.models import RAGResult
+                                rag_result = RAGResult(
+                                    success=True,
+                                    response="",  # Not used in chat flow
+                                    sources=sources,
+                                    error_message=None
+                                )
+                                print(f"✅ RAG retrieval successful: {len(rag_result.sources)} sources")
+                        except Exception as retrieval_error:
+                            print(f"⚠️  Document retrieval failed: {retrieval_error}")
             except Exception as e:
-                # Log warning but continue without RAG
                 print(f"⚠️  RAG retrieval failed: {e}")
+        elif not rag_enabled:
+            print(f"📊 RAG is disabled in session config")
         
+        print(rag_result)
         # Build combined context
         context_builder = ContextBuilder(max_tokens=request.max_context_tokens)
         combined_context = context_builder.build_context(
@@ -492,15 +523,21 @@ async def chat(request: ChatRequest):
             )
             final_messages.insert(0, system_msg)
         
-        # Generate response - with or without tools
-        if request.use_tools:
+        # Determine if tools are enabled from DB config
+        tools_enabled = mcp_tools_config.get("enabled", False) if mcp_tools_config else False
+        tool_names = mcp_tools_config.get("selected_tools", None) if mcp_tools_config else None
+        max_tool_iterations = mcp_tools_config.get("max_iterations", 5) if mcp_tools_config else 5
+        
+        # Generate response - with or without tools (based on DB config)
+        if tools_enabled:
+            print(f"🔧 Using tools from DB config: {tool_names}, max_iterations={max_tool_iterations}")
             # Use tool-enabled agent
             response_text, agent_steps, tool_results = await llm.chat_with_tools(
                 final_messages,
-                tool_names=request.tool_names,
+                tool_names=tool_names,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-                max_iterations=request.max_tool_iterations
+                max_iterations=max_tool_iterations
             )
             
             # Convert agent steps to response format
@@ -591,6 +628,7 @@ async def chat(request: ChatRequest):
                 context_text = context_text_with_tools
         else:
             # Standard chat without tools
+            print(f"💬 Generating response without tools")
             response_text = llm.chat(
                 final_messages,
                 temperature=request.temperature,
@@ -599,14 +637,15 @@ async def chat(request: ChatRequest):
             agent_steps_info = []
             tool_calls_info = []
         
-        # Store assistant response in memory
-        if memory_service:
+        # Store assistant response in memory (if enabled)
+        if memory_service and memory_enabled:
             assistant_msg = ChatMessage(
                 role="assistant",
                 content=response_text,
                 timestamp=datetime.now()
             )
             memory_service.add_message(session_id, assistant_msg)
+            print(f"💾 Stored assistant response in memory")
         
         print(context_text)
         return ChatResponse(
@@ -619,7 +658,7 @@ async def chat(request: ChatRequest):
             rag_sources=rag_sources_list,
             tool_calls=tool_calls_info,
             agent_steps=agent_steps_info,
-            tools_used=request.use_tools and len(tool_calls_info) > 0
+            tools_used=tools_enabled and len(tool_calls_info) > 0
         )
     
     except HTTPException:

@@ -29,8 +29,8 @@ export const MEMORY_TYPE_DESCRIPTIONS = {
 // Long-term memory types only (excludes short-term)
 export const LONG_TERM_MEMORY_TYPES = [
   MEMORY_TYPES.SEMANTIC,
-  MEMORY_TYPES.EPISODIC,
   MEMORY_TYPES.PROFILE,
+  MEMORY_TYPES.EPISODIC,
   MEMORY_TYPES.PROCEDURAL,
 ];
 

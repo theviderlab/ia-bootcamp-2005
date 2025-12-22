@@ -46,6 +46,16 @@ class RAGResult:
 
 
 @dataclass
+class RetrievalResult:
+    """Result from document retrieval without LLM generation."""
+
+    success: bool
+    sources: list[dict[str, Any]]
+    query: str
+    error_message: str | None = None
+
+
+@dataclass
 class KnowledgeDocument:
     """A document stored in the knowledge base."""
 
@@ -427,6 +437,7 @@ __all__ = [
     # Data models
     "ChatMessage",
     "RAGResult",
+    "RetrievalResult",
     "KnowledgeDocument",
     "MemoryContext",
     "MemoryStats",

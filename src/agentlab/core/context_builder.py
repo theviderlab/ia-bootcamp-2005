@@ -271,22 +271,22 @@ class ContextBuilder:
         Format RAG sources into readable text.
         
         Args:
-            sources: List of source documents with metadata.
+            sources: List of source documents with metadata from retrieve_documents().
+                Expected keys: 'content_preview', 'source', 'chunk', 'score', 'created_at'
         
         Returns:
             Formatted string of RAG sources.
         """
         formatted = []
         for i, source in enumerate(sources, 1):
-            content = source.get("page_content", "")
-            metadata = source.get("metadata", {})
-            doc_id = metadata.get("doc_id", f"doc_{i}")
-            namespace = metadata.get("namespace", "")
+            # Extract fields from retrieve_documents() structure
+            content = source.get("content_preview", "")
+            source_name = source.get("source", "unknown")
+            chunk = source.get("chunk", 0)
+            score = source.get("score", 0.0)
             
-            header = f"### Document {i}"
-            if namespace:
-                header += f" (namespace: {namespace})"
-            header += f"\n**ID**: {doc_id}\n"
+            header = f"### Document {i} - {source_name} (chunk {int(chunk)})"
+            header += f"\n**Relevance Score**: {score:.3f}\n"
             
             formatted.append(f"{header}\n{content}")
         

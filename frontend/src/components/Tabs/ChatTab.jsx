@@ -1,8 +1,5 @@
 import { useState } from 'react';
 import { useChat } from '@hooks/useChat';
-import { useMemory } from '@hooks/useMemory';
-import { useRAG } from '@hooks/useRAG';
-import { useMCP } from '@hooks/useMCP';
 import { useDebounce } from '@utils/debounce';
 import { MessageList } from '../Chat/MessageList';
 import { InputBox } from '../Chat/InputBox';
@@ -13,14 +10,12 @@ import { ExportDialog } from '../Chat/ExportDialog';
  * 
  * Main chat interface combining MessageList and InputBox.
  * Uses useChat hook for state management and API integration.
- * Phase 6: Integrated MCP tools with chat flow.
- * Phase 7: Adds export and search functionality.
+ * 
+ * Configuration (memory, RAG, MCP tools) is managed by backend from database.
+ * No need to pass configuration options - they are read from session_configs table.
  */
 export const ChatTab = () => {
   const { messages, loading, error, sendMessage, clearError } = useChat();
-  const { memoryEnabled, enabledTypes } = useMemory();
-  const { ragEnabled, selectedNamespaces } = useRAG();
-  const { toolsEnabled, selectedTools } = useMCP();
   const [showExport, setShowExport] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -28,23 +23,11 @@ export const ChatTab = () => {
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   /**
-   * Handle message send with current configuration
+   * Handle message send
+   * Backend reads all configuration (memory, RAG, tools) from database
    */
   const handleSend = async (content) => {
-    await sendMessage(content, {
-      // Memory config
-      useMemory: memoryEnabled,
-      memoryTypes: enabledTypes,
-      
-      // RAG config
-      useRAG: ragEnabled,
-      ragNamespaces: selectedNamespaces,
-      
-      // MCP tools config
-      useTools: toolsEnabled,
-      availableTools: selectedTools.length > 0 ? selectedTools : null,
-      toolChoice: 'auto',
-    });
+    await sendMessage(content);
   };
 
   return (

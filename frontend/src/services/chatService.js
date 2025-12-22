@@ -10,49 +10,33 @@ export const chatService = {
   /**
    * Send a chat message
    * 
-   * IMPORTANT: Backend manages all conversation history and memory.
+   * IMPORTANT: Backend manages all conversation history, memory, RAG, and tools.
+   * 
+   * Configuration (memory, RAG, MCP tools) is read from session_configs in database.
    * The messages array should contain ONLY the current user message.
    * Do NOT send the full conversation history - the backend reconstructs
    * context from its memory system based on session_id.
    * 
    * @param {Array} messages - Array with single current user message [{role: 'user', content: '...'}]
-   * @param {Object} config - Chat configuration
+   * @param {Object} config - Optional generation parameters (temperature, max_tokens, etc.)
    * @returns {Promise<Object>} Chat response with context and sources
    */
   sendMessage: async (messages, config = {}) => {
     const {
-      sessionId = null,
+      session_id = null,
       temperature = 0.7,
-      maxTokens = 500,
-      useMemory = true,
-      useRag = false,
-      memoryTypes = ['semantic', 'episodic', 'profile', 'procedural'],
-      ragNamespaces = [],
-      ragTopK = 5,
-      maxContextTokens = 4000,
-      contextPriority = 'balanced',
-      useTools = false,
-      toolChoice = 'auto',
-      availableTools = null,
-      maxToolIterations = 5,
+      max_tokens = 500,
+      max_context_tokens = 4000,
+      context_priority = 'balanced',
     } = config;
 
     const response = await apiClient.post(API_ENDPOINTS.chat, {
       messages,
-      session_id: sessionId,
+      session_id,
       temperature,
-      max_tokens: maxTokens,
-      use_memory: useMemory,
-      use_rag: useRag,
-      memory_types: memoryTypes,
-      rag_namespaces: ragNamespaces,
-      rag_top_k: ragTopK,
-      max_context_tokens: maxContextTokens,
-      context_priority: contextPriority,
-      use_tools: useTools,
-      tool_choice: toolChoice,
-      available_tools: availableTools,
-      max_tool_iterations: maxToolIterations,
+      max_tokens,
+      max_context_tokens,
+      context_priority,
     });
 
     return response.data;

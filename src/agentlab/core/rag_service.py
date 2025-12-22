@@ -115,6 +115,52 @@ class RAGServiceImpl:
         except Exception as e:
             raise RuntimeError(f"Failed to ensure index exists: {e}") from e
 
+    def retrieve_documents(
+        self, query: str, top_k: int = 5, namespace: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve relevant documents without LLM generation.
+
+        This method performs only vector similarity search and returns
+        document metadata with scores. No LLM calls are made.
+
+        Args:
+            query: User query string.
+            top_k: Number of top documents to retrieve.
+            namespace: Optional namespace for multi-tenant isolation.
+
+        Returns:
+            List of source dictionaries with metadata and similarity scores.
+            Returns empty list if no documents found or query is invalid.
+
+        Raises:
+            RuntimeError: If document retrieval fails.
+        """
+        try:
+            # Preprocess query
+            processed_query = preprocess_text(query)
+
+            if not processed_query:
+                print("Warning: Empty query after preprocessing")
+                return []
+
+            # Use configured namespace if not provided
+            search_namespace = namespace or self.config.namespace
+
+            # Retrieve similar documents with scores
+            docs_with_scores = self._retrieve_similar(processed_query, top_k, search_namespace)
+
+            if not docs_with_scores:
+                return []
+
+            # Extract source information with scores
+            sources = self._extract_sources(docs_with_scores)
+
+            return sources
+
+        except Exception as e:
+            raise RuntimeError(f"Document retrieval failed: {str(e)}") from e
+
     def query(
         self, query: str, top_k: int = 5, namespace: str | None = None
     ) -> RAGResult:
@@ -130,24 +176,10 @@ class RAGServiceImpl:
             RAG result with response and sources.
         """
         try:
-            # Preprocess query
-            processed_query = preprocess_text(query)
+            # Use retrieve_documents for document retrieval
+            sources = self.retrieve_documents(query, top_k, namespace)
 
-            if not processed_query:
-                return RAGResult(
-                    success=False,
-                    response="",
-                    sources=[],
-                    error_message="Query cannot be empty",
-                )
-
-            # Use configured namespace if not provided
-            search_namespace = namespace or self.config.namespace
-
-            # Retrieve similar documents with scores
-            docs_with_scores = self._retrieve_similar(processed_query, top_k, search_namespace)
-
-            if not docs_with_scores:
+            if not sources:
                 # No documents found, respond without context
                 response = self.llm.generate(
                     f"Answer the following question: {query}\n\n"
@@ -160,8 +192,20 @@ class RAGServiceImpl:
                     sources=[],
                 )
 
-            # Extract documents for context building
-            docs = [doc for doc, _ in docs_with_scores]
+            # Reconstruct documents from sources for context building
+            from langchain_core.documents import Document
+            docs = [
+                Document(
+                    page_content=src["content_preview"].replace("...", ""),
+                    metadata={
+                        "source": src["source"],
+                        "chunk": src["chunk"],
+                        "created_at": src["created_at"],
+                    }
+                )
+                for src in sources
+            ]
+            print(docs)
 
             # Build context from retrieved documents
             context = self._build_context(docs)
@@ -171,9 +215,6 @@ class RAGServiceImpl:
 
             # Generate response using LLM
             response = self.llm.generate(augmented_prompt, temperature=0.7)
-
-            # Extract source information with scores
-            sources = self._extract_sources(docs_with_scores)
 
             return RAGResult(
                 success=True, response=response, sources=sources, error_message=None
@@ -211,9 +252,11 @@ class RAGServiceImpl:
             use_namespace = namespace or self.config.namespace
             document_metadata: dict[str, dict[str, Any]] = {}  # Track metadata per doc_id
 
-            for doc in documents:
+            for idx, doc in enumerate(documents):
                 # Check if it's a file path or text content
                 file_size = None
+                source = None
+                
                 if isinstance(doc, (str, Path)):
                     path = Path(doc)
                     if path.exists():
@@ -222,12 +265,15 @@ class RAGServiceImpl:
                         source = path.name
                         file_size = path.stat().st_size
                     else:
-                        # It's text content
+                        # It's text content - generate a source name
                         content = str(doc)
-                        source = None
+                        source = f"text_upload_{idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                        file_size = len(content.encode('utf-8'))
                 else:
+                    # It's text content - generate a source name
                     content = str(doc)
-                    source = None
+                    source = f"text_upload_{idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                    file_size = len(content.encode('utf-8'))
 
                 # Chunk document
                 chunks = chunk_document(
@@ -237,10 +283,14 @@ class RAGServiceImpl:
                     source=source,
                 )
 
-                # Track metadata for MySQL insert (aggregate per source file)
-                if chunks and source:
+                # Track metadata for MySQL insert (now always has source)
+                if chunks:
                     doc_id = generate_document_id(chunks[0].page_content, source)
                     if doc_id not in document_metadata:
+                        # Determine upload type
+                        is_file = isinstance(doc, (str, Path)) and Path(doc).exists()
+                        upload_type = "file" if is_file else "text"
+                        
                         document_metadata[doc_id] = {
                             "doc_id": doc_id,
                             "content": chunks[0].page_content[:500],  # Store first 500 chars as sample
@@ -248,7 +298,12 @@ class RAGServiceImpl:
                             "namespace": use_namespace,
                             "chunk_count": 0,
                             "file_size": file_size,
-                            "metadata": {"source": source, "chunk_size": chunk_size, "chunk_overlap": chunk_overlap},
+                            "metadata": {
+                                "source": source, 
+                                "chunk_size": chunk_size, 
+                                "chunk_overlap": chunk_overlap,
+                                "upload_type": upload_type,
+                            },
                         }
                     document_metadata[doc_id]["chunk_count"] += len(chunks)
 
@@ -271,13 +326,15 @@ class RAGServiceImpl:
             else:
                 self.vectorstore.add_documents(documents=all_chunks, ids=ids)
 
+            print(f"✅ Added {len(all_chunks)} chunks to Pinecone namespace '{use_namespace or 'default'}'")
+
             # Add to MySQL knowledge_base table (fail entire operation if this fails)
             if document_metadata:
                 try:
                     mysql_documents = list(document_metadata.values())
                     rows_affected = bulk_insert_knowledge_documents(mysql_documents)
                     print(
-                        f"Stored {rows_affected} document(s) metadata in MySQL knowledge_base table"
+                        f"✅ Stored {rows_affected} document(s) metadata in MySQL knowledge_base table"
                     )
                 except Exception as mysql_error:
                     # Critical: fail the entire operation if MySQL write fails
@@ -285,9 +342,11 @@ class RAGServiceImpl:
                         f"Failed to store document metadata in MySQL: {mysql_error}. "
                         f"Pinecone vectors added but metadata not persisted."
                     ) from mysql_error
+            else:
+                print("⚠️  Warning: No document metadata to store in MySQL")
 
             print(
-                f"Added {len(all_chunks)} document chunks to namespace '{use_namespace or 'default'}'"
+                f"✅ Successfully added {len(document_metadata)} document(s) to namespace '{use_namespace or 'default'}'"
             )
 
         except Exception as e:

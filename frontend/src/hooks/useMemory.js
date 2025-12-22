@@ -181,13 +181,7 @@ export const useMemory = () => {
     await updateConfig(newTypes, shortTermEnabled);
   }, [enabledTypes, shortTermEnabled, updateConfig]);
 
-  /**
-   * Toggle all memory types at once (master toggle)
-   */
-  const toggleAllMemoryTypes = useCallback(async (enabled) => {
-    const types = enabled ? ALL_MEMORY_TYPES.filter(t => t !== 'short_term') : [];
-    await updateConfig(types, enabled);
-  }, [updateConfig]);
+
 
   /**
    * Fetch short-term memory (conversation history)
@@ -364,7 +358,6 @@ export const useMemory = () => {
     
     // Actions
     toggleMemoryType,
-    toggleAllMemoryTypes,
     updateConfig,
     fetchShortTermMemory,
     fetchLongTermMemory,
